@@ -1,0 +1,1 @@
+self.addEventListener("install",e=>self.skipWaiting()),self.addEventListener("activate",e=>self.clients.claim()),self.addEventListener("fetch",()=>{}),self.addEventListener("notificationclick",e=>{e.notification.close(),e.waitUntil(self.clients.matchAll({type:"window"}).then(e=>e.length?e[0].focus():self.clients.openWindow("./")))});
