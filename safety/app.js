@@ -1,7 +1,7 @@
 {
 /* ================= storage ================= */
-const KEYS=['users','sites','checkins','dailies','insps','equip','talks','incidents','actions','training','cordocs','meta'];
-const S={users:[],sites:[],checkins:[],dailies:[],insps:[],equip:[],talks:[],incidents:[],actions:[],training:[],cordocs:{},meta:{}};
+const KEYS=['users','sites','checkins','dailies','insps','equip','talks','incidents','actions','training','policysigs','cordocs','meta'];
+const S={users:[],sites:[],checkins:[],dailies:[],insps:[],equip:[],talks:[],incidents:[],actions:[],training:[],policysigs:[],cordocs:{},meta:{}};
 let db=null;
 function idb(){return new Promise(res=>{try{const r=indexedDB.open('vss',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)}catch(e){res(null)}})}
 function get(k){return new Promise(res=>{if(!db)return res(undefined);try{const q=db.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(undefined)}catch(e){res(undefined)}})}
@@ -13,8 +13,8 @@ const FIREBASE_CONFIG = (location.protocol === 'https:' && /github\.io$|20vision
   apiKey: "AIzaSyAbt-ULY8uhBIoxklQHEBPPOsfjSR1cQtM", authDomain: "vision-crew-connect.firebaseapp.com", projectId: "vision-crew-connect",
   storageBucket: "vision-crew-connect.firebasestorage.app", messagingSenderId: "808328932749", appId: "1:808328932749:web:3624188efff939c8d0a1c4" } : null;
 const CLOUD = (() => {
-  const KINDS = ['users','sites','checkins','dailies','insps','equip','talks','incidents','actions','training'];
-  const OWN = ['checkins','dailies','insps','talks','incidents','training'];
+  const KINDS = ['users','sites','checkins','dailies','insps','equip','talks','incidents','actions','training','policysigs'];
+  const OWN = ['checkins','dailies','insps','talks','incidents','training','policysigs'];
   let fs = null, auth = null, ready = false, sent = {}, queue = new Set(), status = 'off', admin = false, inited = false;
   const h = o => { const j = JSON.stringify(o); let x = 0; for (let i = 0; i < j.length; i++) x = (x * 31 + j.charCodeAt(i)) | 0; return x + ':' + j.length; };
   function load(src) { return new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); }); }
@@ -109,8 +109,9 @@ const CLOUD = (() => {
   function pushAll() { KINDS.forEach(push); push('cordocs'); }
   async function resume() { const u = await new Promise(r => { const off = auth.onAuthStateChanged(x => { off(); r(x); }); }); if (u) { await checkAdmin(u); ready = true; status = 'on'; await pull(); pushAll(); } return u; }
   async function signOut() { try { await auth?.signOut(); } catch (e) {} ready = false; status = 'signed-out'; }
+  async function guestSign(rec) { if (!await init()) throw new Error('offline'); await fs.collection('vss_policysigs').doc(rec.id).set(rec); }
   const label = () => status === 'on' ? 'Saved to cloud' : 'Cloud: ' + status;
-  return { init, signIn, reset, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
+  return { init, signIn, reset, guestSign, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
 })();
 
 let ME=null;
@@ -151,11 +152,12 @@ function locStamp(l){if(!l)return '';return `${l.lat}, ${l.lng} (±${l.acc} m)${
 /* ================= view state ================= */
 let V={view:'home',p:{}};let D={};
 function go(view,p={}){V={view,p};render();window.scrollTo(0,0)}
-const TABS=[['home','Home','M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z'],['talks','Talks','M4 5h16v11H8l-4 4z'],['inspect','Inspect','M9 11l2 2 4-4M5 4h14v16H5z'],['records','Records','M4 6h16M4 12h16M4 18h10'],['more','More','M5 12h.01M12 12h.01M19 12h.01']];
+const TABS=[['home','Home','M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z'],['policy','Policy','M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5'],['talks','Talks','M4 5h16v11H8l-4 4z'],['inspect','Inspect','M9 11l2 2 4-4M5 4h14v16H5z'],['records','Records','M4 6h16M4 12h16M4 18h10'],['more','More','M5 12h.01M12 12h.01M19 12h.01']];
 
 function render(){
   const app=$('#app');
-  if(!ME){app.innerHTML=authView();bindSig();return}
+  if(!ME){app.innerHTML=location.hash==='#sign-policy'?guestPolicyView():authView();bindSig();return}
+  if(location.hash==='#sign-policy'){try{history.replaceState(null,'',location.pathname)}catch(e){}V={view:'policy',p:{}}}
   const v=VIEWS[V.view]||VIEWS.home;
   const ci=activeCheckin();
   app.innerHTML=`<header class="top"><div class="logo">20 VISION <b>SITE SAFETY</b></div><div class="who" data-act="go" data-v="profile" style="cursor:pointer">${ME.photo?`<img src="${ME.photo}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px">`:''}${esc(ME.name)}<br><span class="small">${ci?'On site: '+esc(siteName(ci.siteId)):'Not checked in'} • <span id="cloudst">${CLOUD.on?CLOUD.label():'Saved on this phone'}</span></span></div></header>
@@ -163,7 +165,7 @@ function render(){
   <nav class="tabs">${TABS.map(t=>`<button data-act="tab" data-v="${t[0]}" class="${tabOf(V.view)===t[0]?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${t[2]}"/></svg>${t[1]}</button>`).join('')}</nav>`;
   bindSig();
 }
-function tabOf(v){if(['talks','talkrun'].includes(v))return 'talks';if(['inspect','inspform'].includes(v))return 'inspect';if(['records','record'].includes(v))return 'records';if(['home','checkin','daily','incident'].includes(v))return 'home';return 'more'}
+function tabOf(v){if(v==='policy')return 'policy';if(['talks','talkrun'].includes(v))return 'talks';if(['inspect','inspform'].includes(v))return 'inspect';if(['records','record'].includes(v))return 'records';if(['home','checkin','daily','incident'].includes(v))return 'home';return 'more'}
 
 /* ================= auth ================= */
 let authMode='in';
@@ -234,6 +236,8 @@ async function authSubmit(e){
 /* ================= HOME ================= */
 function dueItems(){
   const out=[];
+  if(!mySig())out.push(['bad','Read and sign the company policy (Policy tab).']);
+  if(isOffice()){const miss=S.users.filter(u=>u.active!==false&&u.id!==ME.id&&!S.policysigs.some(p=>p.userId===u.id&&p.version===POLICY_VERSION));if(miss.length)out.push(['warn',`${miss.length} worker(s) have not signed the company policy.`])}
   const myTr=S.training.filter(t=>isOffice()||t.userId===ME.id);
   for(const t of myTr)if(t.expiry){const d=-daysSince(t.expiry);if(d<0)out.push(['bad',`${userName(t.userId)}: ${courseName(t.course)} expired`]);else if(d<=45)out.push(['warn',`${userName(t.userId)}: ${courseName(t.course)} expires in ${d} days`])}
   for(const q of S.equip)if(q.status==='out')out.push(['bad',`Out of service: ${INSP[q.type]?.name||q.type} ${q.serial}`]);
@@ -451,7 +455,7 @@ async function saveInc(){
   D={};toast('Report submitted. The office will investigate.');go('record',{k:'incidents',id:r.id})}
 
 /* ================= RECORDS ================= */
-const KIND={dailies:['Daily check','daily'],insps:['Inspection','insp'],talks:['Toolbox talk','talk'],incidents:['Incident','inc'],checkins:['Check-in','ci']};
+const KIND={policysigs:['Policy sign-off','pol'],dailies:['Daily check','daily'],insps:['Inspection','insp'],talks:['Toolbox talk','talk'],incidents:['Incident','inc'],checkins:['Check-in','ci']};
 let recFilter='all',recSite='';
 VIEWS.records=()=>{
   let rows=[];
@@ -462,13 +466,13 @@ VIEWS.records=()=>{
   <div class="chips">${[['all','All'],...Object.entries(KIND).map(([k,v])=>[k,v[0]+'s'])].map(([k,l])=>`<button class="chip ${recFilter===k?'on':''}" data-act="recf" data-v="${k}">${esc(l)}</button>`).join('')}</div>
   <label class="f" for="r-site">Site</label><select id="r-site" data-act-change="recsite"><option value="">All sites</option>${S.sites.map(s=>`<option value="${s.id}" ${recSite===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select><p></p>
   <div class="card">${rows.length?`<div class="list">${rows.slice(0,200).map(([k,r])=>`<div class="it" data-act="openRec" data-k="${k}" data-v="${r.id}"><span class="pill ${recPill(k,r)[0]}">${esc(KIND[k][0])}</span><div class="m"><b>${esc(recTitle(k,r))}</b><div class="small mute">${fmt(r.at||r.inAt)} • ${esc(userName(r.userId))} • ${esc(siteName(r.siteId))}</div></div><span class="small">${esc(recPill(k,r)[1])}</span></div>`).join('')}</div>`:'<p class="mute">No records yet.</p>'}</div>`};
-function recTitle(k,r){return k==='insps'?(INSP[r.type]?.name||r.type)+' '+(r.f?.serial||''):k==='talks'?r.title:k==='incidents'?(INC_TYPES.find(t=>t[0]===r.type)||[])[1]:k==='dailies'?(r.task||'Daily check').slice(0,60):'Checked in'}
-function recPill(k,r){if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
+function recTitle(k,r){if(k==='policysigs')return 'Company policy signed by '+r.name;return k==='insps'?(INSP[r.type]?.name||r.type)+' '+(r.f?.serial||''):k==='talks'?r.title:k==='incidents'?(INC_TYPES.find(t=>t[0]===r.type)||[])[1]:k==='dailies'?(r.task||'Daily check').slice(0,60):'Checked in'}
+function recPill(k,r){if(k==='policysigs')return r.guest?['warn',r.role||'Guest']:['ok','Signed'];if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
 VIEWS.record=()=>{
   const {k,id}=V.p;const r=S[k].find(x=>x.id===id);if(!r)return '<p>Record not found.</p>';
   const head=`<div class="row noprint"><button class="btn sm" data-act="tab" data-v="records">Back</button><button class="btn sm" data-act="print">Print / save PDF</button></div><p></p>
   <div class="hero"><div class="stripe"></div><div class="in"><p class="small mute">20 Vision Electric Inc. • ${esc(KIND[k][0])}</p><h1>${esc(recTitle(k,r))}</h1>
-  <dl class="kv"><dt>Date</dt><dd>${fmt(r.at||r.inAt)}</dd><dt>By</dt><dd>${esc(userName(r.userId))}</dd><dt>Site</dt><dd>${esc(siteName(r.siteId))}</dd><dt>GPS</dt><dd>${esc(locStamp(r.loc))}${r.loc?` • <a href="https://maps.google.com/?q=${r.loc.lat},${r.loc.lng}" target="_blank" rel="noopener">map</a>`:''}</dd></dl></div></div><p></p>`;
+  <dl class="kv"><dt>Date</dt><dd>${fmt(r.at||r.inAt)}</dd><dt>By</dt><dd>${esc(r.userId?userName(r.userId):r.name||'')}</dd><dt>Site</dt><dd>${esc(siteName(r.siteId))}</dd><dt>GPS</dt><dd>${esc(locStamp(r.loc))}${r.loc?` • <a href="https://maps.google.com/?q=${r.loc.lat},${r.loc.lng}" target="_blank" rel="noopener">map</a>`:''}</dd></dl></div></div><p></p>`;
   let body='';
   if(k==='dailies'){const L=Object.fromEntries(DAILY.flatMap(s=>s.items.map(i=>[i[0],i[1]])));
     body=`<div class="card"><h3>Work today</h3><p>${esc(r.task)}</p><h3>Checklist</h3><table>${Object.entries(r.ans).map(([q,a])=>`<tr><td>${esc(L[q])}</td><td><span class="pill ${a==='y'?'ok':a==='n'?'bad':''}">${a==='y'?'Yes':a==='n'?'No':'N/A'}</span></td></tr>`).join('')}</table>
@@ -483,6 +487,7 @@ VIEWS.record=()=>{
     <h3>Attendance (${r.att.length})</h3><table><tr><th>Name</th><th>Company</th><th>Signature</th></tr>${r.att.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.company)}</td><td><img src="${a.sig}" alt="" style="width:120px;background:#fff"></td></tr>`).join('')}</table></div>`;
   if(k==='checkins')body=`<div class="card"><dl class="kv"><dt>Arrived</dt><dd>${fmt(r.inAt)}</dd><dt>Left</dt><dd>${fmt(r.outAt)||'Still on site'}</dd><dt>Distance</dt><dd>${r.dist!=null?r.dist+' m from site pin':'Site has no pin'}</dd><dt>Flag</dt><dd>${esc(r.reason||'None')}</dd><dt>Location logs</dt><dd>${(r.pings||[]).length}</dd></dl></div>`;
   if(k==='incidents')body=incBody(r);
+  if(k==='policysigs')body=`<div class="card"><p>${esc(POLICY_AGREE)}</p><dl class="kv"><dt>Name</dt><dd>${esc(r.name)}</dd><dt>Role</dt><dd>${esc(r.role||'Employee')}</dd>${r.org?`<dt>School / company</dt><dd>${esc(r.org)}</dd>`:''}${r.email?`<dt>Email</dt><dd>${esc(r.email)}</dd>`:''}${r.phone?`<dt>Phone</dt><dd>${esc(r.phone)}</dd>`:''}<dt>Policy version</dt><dd>${esc(r.version)}</dd><dt>Signed</dt><dd>${fmt(r.at)}</dd></dl><h3>Signature</h3><img src="${r.sig}" alt="Signature" style="max-width:280px;background:#fff">${r.minor?`<h3>Parent / guardian</h3><p>${esc(r.gName)}</p><img src="${r.gSig}" alt="Guardian signature" style="max-width:280px;background:#fff">`:''}<p class="small mute">Policy issued by ${esc(POLICY_SIGNER)}</p></div>`;
   return head+body};
 function incBody(r){
   const t=new Date(r.when||r.at);const dl=h=>new Date(t.getTime()+h*36e5);
@@ -555,6 +560,7 @@ function evidence(ev){
   const act=S.sites.filter(s=>s.active!==false);
   const E={
     policy:[],legis:[],none:[],
+    rules:[['Every active worker has signed the company policy',S.users.filter(u=>u.active!==false).every(u=>S.policysigs.some(p=>p.userId===u.id))]],
     flha:[['Daily hazard assessments in the last 30 days',since(S.dailies,30).length>0],['A daily check for every day worked on site (last 30 days)',since(S.checkins,30).every(c=>S.dailies.some(d=>d.checkinId===c.id))],['Hazards rated before and after controls',S.dailies.some(d=>Object.keys(d.hz).length)]],
     controls:[['Lockout kit inspected in the last 90 days',since(S.insps,90,r=>r.type==='loto').length>0],['Rubber gloves / arc PPE inspected in the last 30 days',since(S.insps,30,r=>r.type==='gloves').length>0]],
     ppe:[['PPE checked on daily checks in the last 30 days',since(S.dailies,30).length>0]],
@@ -597,6 +603,61 @@ VIEWS.socials=()=>{const cats=['All',...new Set(SOCIALS.map(s=>s.cat))];
 VIEWS.updates=()=>`<h1>Safety updates</h1><p>Ontario rules and safety news for the electrical trade, checked weekly.</p>
   ${UPDATES.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(u=>`<div class="card" style="margin-bottom:12px"><p class="small mute">${fmtD(u.date)} • ${esc(u.src)}</p><h3>${esc(u.title)}</h3><p>${esc(u.body)}</p><a href="${esc(u.url)}" target="_blank" rel="noopener">Source</a></div>`).join('')}`;
 
+/* ================= COMPANY POLICY ================= */
+const LIVE_URL='https://20visionelectric.github.io/crew-connect/safety/';
+const mySig=()=>ME&&S.policysigs.filter(p=>p.userId===ME.id&&p.version===POLICY_VERSION).sort((a,b)=>b.at.localeCompare(a.at))[0];
+function policyBody(){return `<p class="row noprint"><a class="btn sm" href="policy.pdf" target="_blank" rel="noopener">Open the original PDF</a></p>
+  ${POLICY.map((p,i)=>`<details class="card" style="margin-bottom:10px" ${i===0?'open':''}><summary style="cursor:pointer"><b style="font-size:18px">${i+1}. ${esc(p.t)}</b></summary><div style="margin-top:10px">${p.b.map(x=>Array.isArray(x)?`<ul>${x.map(li=>`<li style="margin-bottom:6px">${esc(li)}</li>`).join('')}</ul>`:`<p>${esc(x)}</p>`).join('')}<p class="small mute">${esc(POLICY_SIGNER)}</p></div></details>`).join('')}`}
+function signBlock(guest){
+  if(D.kind!=='pol')D={kind:'pol',name:guest?'':ME.name,email:guest?'':ME.email,phone:guest?'':(ME.phone||''),role:'Employee',org:'',minor:false,gName:'',read:false};
+  return `<div class="card" id="signbox"><h2>Sign the company policy</h2><p class="infobox">${esc(POLICY_AGREE)}</p>
+  <label class="row" style="margin:12px 0"><input type="checkbox" id="pol-read" style="width:26px;min-height:26px" ${D.read?'checked':''}> <span>I have read the whole company policy, code of conduct, employee responsibilities and PPE rules.</span></label>
+  <label class="f" for="pol-name">Print name</label><input id="pol-name" data-bind="name" value="${esc(D.name)}" autocomplete="name">
+  ${guest?`<label class="f" for="pol-email">Email</label><input id="pol-email" type="email" data-bind="email" value="${esc(D.email)}" autocomplete="email">
+  <label class="f" for="pol-phone">Phone</label><input id="pol-phone" type="tel" data-bind="phone" value="${esc(D.phone)}" autocomplete="tel">
+  <label class="f" for="pol-role">I am</label><select id="pol-role" data-bind="role">${['Employee','Co-op student','Apprentice','Subcontractor','Visitor'].map(r=>`<option ${D.role===r?'selected':''}>${r}</option>`).join('')}</select>
+  <label class="f" for="pol-org">School or company (if co-op, subcontractor or visitor)</label><input id="pol-org" data-bind="org" value="${esc(D.org)}">`:''}
+  <label class="f">Signature</label><canvas class="sig" data-sig="psig"></canvas><button class="btn sm" data-act="clearsig" data-v="psig">Clear</button>
+  <p class="small mute">Date: ${fmtD(today())}</p>
+  <label class="row" style="margin:12px 0"><input type="checkbox" id="pol-minor" style="width:26px;min-height:26px" ${D.minor?'checked':''}> <span>I am under 18 years old (a parent or guardian must also sign)</span></label>
+  <div id="pol-g" style="display:${D.minor?'':'none'}"><label class="f" for="pol-gname">Parent / guardian print name</label><input id="pol-gname" data-bind="gName" value="${esc(D.gName)}"><label class="f">Parent / guardian signature</label><canvas class="sig" data-sig="gsig"></canvas><button class="btn sm" data-act="clearsig" data-v="gsig">Clear</button></div>
+  <p></p><button class="btn pri block" data-act="signPolicy" data-v="${guest?1:0}">Sign and submit</button></div>`}
+VIEWS.policy=()=>{const m=mySig();
+  return `<h1>Company policy</h1><p class="mute">20 Vision Electric Inc. • version ${esc(POLICY_VERSION)} • read every section, then sign at the bottom.</p>
+  ${m?`<p class="okbox"><b>You signed this policy on ${fmt(m.at)}</b></p>`:'<p class="warnbox"><b>Not signed yet.</b> Read the policy and sign at the bottom.</p>'}
+  ${policyBody()}${m?'':signBlock(false)}`};
+function guestPolicyView(){
+  if(D.done)return `<div class="authwrap"><div class="hero"><div class="stripe"></div><div class="in"><h1>Thank you, ${esc(D.done)}</h1><p class="okbox">Your signed company policy was sent to 20 Vision Electric.</p><p>Hand the phone back to your supervisor.</p></div></div></div>`;
+  return `<header class="top"><div class="logo">20 VISION <b>ELECTRIC</b></div></header><main><h1>Company policy sign-off</h1><p>For new employees, co-op students, subcontractors and visitors. Read each section, then sign at the bottom.</p>${policyBody()}${signBlock(true)}</main>`}
+async function signPolicy(t){
+  const guest=t.dataset.v==='1';
+  D.read=$('#pol-read').checked;D.minor=$('#pol-minor').checked;
+  if(!D.read)return toast('Tick the box to confirm you read the whole policy.');
+  if(!D.name.trim())return toast('Print your name.');
+  if(guest&&!D.email.trim()&&!D.phone.trim())return toast('Add an email or phone number.');
+  if(!D.psig)return toast('Sign in the signature box.');
+  if(D.minor&&(!D.gName.trim()||!D.gsig))return toast('A parent or guardian must print their name and sign.');
+  const rec={id:uid(),userId:guest?null:ME.id,name:D.name.trim(),email:(D.email||'').trim(),phone:(D.phone||'').trim(),role:guest?D.role:(ME.trade||'Employee'),org:(D.org||'').trim(),minor:D.minor,gName:D.minor?D.gName.trim():'',gSig:D.minor?D.gsig:'',sig:D.psig,at:now(),version:POLICY_VERSION,guest};
+  t.disabled=true;
+  if(guest){
+    if(CLOUD.on){try{await CLOUD.guestSign(rec)}catch(e){t.disabled=false;return toast('Could not send. Check the internet connection and try again.')}}
+    else{S.policysigs.push(rec);save('policysigs')}
+    D={done:rec.name};render();return}
+  S.policysigs.push(rec);save('policysigs');D={};toast('Policy signed. Thank you.');render();window.scrollTo(0,0)}
+VIEWS.policyadmin=()=>{
+  const sigs=S.policysigs.slice().sort((a,b)=>b.at.localeCompare(a.at));
+  const missing=S.users.filter(u=>u.active!==false&&!S.policysigs.some(p=>p.userId===u.id&&p.version===POLICY_VERSION));
+  setTimeout(drawQR,0);
+  return `<h1>Policy sign-offs</h1><div class="grid g2"><div class="card" style="text-align:center"><h2>Scan to sign</h2><p>Show this to a new employee or co-op student. They scan it with their phone camera, read the policy and sign. No account needed.</p>
+   <div id="qr" style="display:inline-block;background:#fff;padding:14px;border-radius:12px;min-width:250px;min-height:250px"></div>
+   <p class="small" style="overflow-wrap:anywhere">${esc(LIVE_URL)}#sign-policy</p>
+   <button class="btn sm" data-act="copyLink">Copy link</button></div>
+  <div class="card"><h2>Not signed yet (${missing.length})</h2>${missing.length?`<div class="list">${missing.map(u=>`<div class="it"><div class="m"><b>${esc(u.name)}</b><div class="small mute">${esc(u.trade||'')}</div></div><span class="pill bad">Not signed</span></div>`).join('')}</div>`:'<p class="okbox">Everyone with an account has signed this version.</p>'}</div></div><p></p>
+  <div class="card"><h2>Signed (${sigs.length})</h2>${sigs.length?`<div class="list">${sigs.map(p=>`<div class="it" data-act="openRec" data-k="policysigs" data-v="${p.id}"><img src="${p.sig}" alt="" style="width:90px;height:40px;object-fit:contain;background:#fff;border-radius:6px"><div class="m"><b>${esc(p.name)}</b><div class="small mute">${esc(p.role||'')}${p.org?' • '+esc(p.org):''} • ${fmt(p.at)}${p.minor?' • under 18, guardian signed':''}</div></div><span class="pill ${p.guest?'warn':'ok'}">${p.guest?'QR':'App'}</span></div>`).join('')}</div>`:'<p class="mute">No signatures yet.</p>'}</div>`};
+function drawQR(){const el=$('#qr');if(!el)return;
+  try{const q=qrcode(0,'M');q.addData(LIVE_URL+'#sign-policy');q.make();el.innerHTML=q.createSvgTag({cellSize:6,margin:2,scalable:true});const sv=el.querySelector('svg');if(sv){sv.style.width='240px';sv.style.height='240px'}}
+  catch(e){el.innerHTML='<p class="small" style="color:#111">QR code could not load. Use the link below.</p>'}}
+
 /* ================= MORE / ADMIN ================= */
 VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   <button class="tile" data-act="go" data-v="profile"><b>My profile</b><span>Details and documents</span></button>
@@ -606,7 +667,8 @@ VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   <button class="tile" data-act="go" data-v="emerg"><b>Emergency info</b><span>Per site</span></button>
   <button class="tile" data-act="go" data-v="socials"><b>Safety Socials</b><span>Do / Don't</span></button>
   <button class="tile" data-act="go" data-v="updates"><b>Safety updates</b><span>Weekly</span></button>
-  ${isOffice()?`<button class="tile" data-act="go" data-v="sites"><b>Job sites</b><span>Location and emergency plan</span></button>
+  ${isOffice()?`<button class="tile" data-act="go" data-v="policyadmin"><b>Policy sign-offs</b><span>QR code and signatures</span></button>
+  <button class="tile" data-act="go" data-v="sites"><b>Job sites</b><span>Location and emergency plan</span></button>
   <button class="tile" data-act="go" data-v="crew"><b>Crew</b><span>Accounts and roles</span></button>
   <button class="tile" data-act="go" data-v="equiplist"><b>Equipment list</b><span>COR element 7</span></button>
   <button class="tile" data-act="go" data-v="exportv"><b>Export / backup</b><span>For audits</span></button>`:''}
@@ -654,6 +716,8 @@ document.addEventListener('change',async e=>{
   if(a==='role'){const u=S.users.find(x=>x.id===t.dataset.v);u.role=t.value;save('users');toast('Role updated.')}
   if(t.id==='imp'){const f=t.files[0];if(!f)return;try{const j=JSON.parse(await f.text());if(!j.users)throw 0;if(!await ask('Restore backup?','This replaces all records on this device with the backup.','Restore',true))return;for(const k of KEYS)if(j[k]!==undefined){S[k]=j[k];save(k)}toast('Backup restored.');render()}catch(err){toast('That file is not a Site Safety backup.')}}
 });
+document.addEventListener('change',e=>{if(e.target.id==='pol-minor'){D.minor=e.target.checked;const g=$('#pol-g');if(g){g.style.display=D.minor?'':'none';const c=g.querySelector('canvas');if(D.minor&&c)PADS.gsig=sigPad(c,d=>{D.gsig=d})}}if(e.target.id==='pol-read')D.read=e.target.checked});
+window.addEventListener('hashchange',()=>{if(!ME)render()});
 document.addEventListener('submit',e=>{if(e.target.id==='authf')authSubmit(e)});
 const ACT={
   tab:t=>{D={};go(t.dataset.v)},
@@ -667,6 +731,8 @@ const ACT={
   risk:t=>{D.hz[t.dataset.k][t.dataset.w]=t.dataset.v;t.parentNode.querySelectorAll('.chip').forEach(b=>b.classList.toggle('on',b===t))},
   clearsig:t=>PADS[t.dataset.v]?.clear(),
   saveDaily,
+  signPolicy:t=>signPolicy(t),
+  copyLink:async()=>{try{await navigator.clipboard.writeText(LIVE_URL+'#sign-policy');toast('Link copied.')}catch(e){toast(LIVE_URL+'#sign-policy')}},
   startInsp:t=>{const c=activeCheckin();if(!c)return toast('Check in on site first.');if(!S.dailies.some(d=>d.checkinId===c.id))return toast('Do your daily safety check first.');D={kind:'insp',type:t.dataset.v,f:{},ans:{},photos:[],notes:''};go('inspform')},
   saveInsp,
   startTalk:t=>{if(!activeCheckin())return toast('Check in on site first.');const tp=TALKS.find(x=>x.id===t.dataset.v);D=tp?{topicId:tp.id,title:tp.title,points:tp.points,qs:tp.ask,ref:tp.ref,att:[],notes:''}:{topicId:'custom',title:'',customPts:'',points:[],qs:[],ref:'',att:[],notes:''};go('talkrun')},
