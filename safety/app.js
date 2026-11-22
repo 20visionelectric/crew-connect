@@ -15,6 +15,7 @@ const FIREBASE_CONFIG = (location.protocol === 'https:' && /github\.io$|20vision
 const CLOUD = (() => {
   const KINDS = ['users','sites','checkins','dailies','insps','equip','talks','incidents','actions','training','policysigs'];
   const OWN = ['checkins','dailies','insps','talks','incidents','training','policysigs'];
+  const PUBLIC_USER = ['id','name','trade','role','active','created','updated']; let denied = {}, warned = false;
   let fs = null, auth = null, ready = false, sent = {}, queue = new Set(), status = 'off', admin = false, inited = false;
   const h = o => { const j = JSON.stringify(o); let x = 0; for (let i = 0; i < j.length; i++) x = (x * 31 + j.charCodeAt(i)) | 0; return x + ':' + j.length; };
   function load(src) { return new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); }); }
@@ -52,7 +53,7 @@ const CLOUD = (() => {
   }
   async function putFile(id, data) {
     const C = 900000, n = Math.ceil(data.length / C);
-    for (let i = 0; i < n; i++) await fs.collection('vss_files').doc(i ? id + '~' + i : id).set({ data: data.slice(i * C, (i + 1) * C), n });
+    const uid = auth.currentUser.uid; for (let i = 0; i < n; i++) await fs.collection('vss_files').doc(i ? id + '~' + i : id).set({ data: data.slice(i * C, (i + 1) * C), n, uid });
   }
   async function getFile(id) {
     const d = await fs.collection('vss_files').doc(id).get(); if (!d.exists) return '';
@@ -70,11 +71,19 @@ const CLOUD = (() => {
       for (const rec of S[kind]) {
         const k = h(rec); if (sent[kind][rec.id] === k) continue;
         try {
+          if (denied[kind + rec.id] === k) continue;
+          const me = auth.currentUser.uid;
+          if (kind === 'users' && !admin && rec.id !== me) { sent[kind][rec.id] = k; continue; }
           const [doc, files] = strip(rec, kind);
           for (const [id, data] of files) if (!(sent.files || {})[id]) { await putFile(id, data); (sent.files = sent.files || {})[id] = 1; }
-          await fs.collection('vss_' + kind).doc(rec.id).set(doc);
+          if (kind === 'users') {
+            const pub = {}, priv = {};
+            for (const f in doc) { if (f === 'pin') continue; (PUBLIC_USER.includes(f) ? pub : priv)[f] = doc[f]; }
+            await fs.collection('vss_users').doc(rec.id).set(pub);
+            await fs.collection('vss_private').doc(rec.id).set(priv);
+          } else await fs.collection('vss_' + kind).doc(rec.id).set(doc);
           sent[kind][rec.id] = k;
-        } catch (e) { if (e.code === 'permission-denied') sent[kind][rec.id] = k; else { retry = true; queue.add(kind); break; } }
+        } catch (e) { if (e.code === 'permission-denied') { denied[kind + rec.id] = k; if (!warned) { warned = true; toast('Some records were refused by the cloud. Tell the office; they are still saved on this phone.'); } } else { retry = true; queue.add(kind); break; } }
       }
     }
     flushing = false; status = retry ? 'waiting for signal' : 'on'; if (retry) setTimeout(flush, 30000); else if (queue.size) flush();
@@ -98,9 +107,13 @@ const CLOUD = (() => {
         for (const d of snap.docs) {
           const rec = await fix(d.data());
           const i = S[kind].findIndex(x => x.id === rec.id);
-          if (i < 0) S[kind].push(rec); else S[kind][i] = rec;
-          sent[kind][rec.id] = h(rec);
+          if (i < 0) S[kind].push(rec); else S[kind][i] = kind === 'users' ? Object.assign({}, S[kind][i], rec) : rec;
         }
+        if (kind === 'users') {
+          const priv = admin ? (await fs.collection('vss_private').get()).docs : [await fs.collection('vss_private').doc(uid).get()].filter(d => d.exists);
+          for (const d of priv) { const p = await fix(d.data()); const u = S.users.find(x => x.id === d.id); if (u) Object.assign(u, p); }
+        }
+        for (const r of S[kind]) if (snap.docs.some(d => d.id === r.id)) sent[kind][r.id] = h(r);
         saveLocal(kind);
       } catch (e) { status = 'waiting for signal'; }
     }
@@ -365,6 +378,7 @@ function dateRules(type,f){
   if(type==='ewp'&&f.tag&&daysSince(f.tag)>365)out.push('Inspection tag date is more than 12 months old.');
   if(type==='firstaid'&&f.card&&daysSince(f.card)>92)out.push('First aid kit inspection card is more than 3 months old.');
   if(type==='gloves'&&f.test&&!/^\s*0{1,2}\s*$/.test(f.class||'')&&daysSince(f.test)>92)out.push('Glove dielectric test is more than 3 months old (in service).');
+  if(type==='gloves'&&f.test&&/^\s*0{1,2}\s*$/.test(f.class||'')&&daysSince(f.test)>183)out.push('Class 00/0 glove test is more than 6 months old.');
   if(type==='harness'&&f.mfg&&!f.expiry&&daysSince(f.mfg)>365*5)out.push('Harness is over 5 years old with no service-life date. Check the manufacturer\'s limit.');
   return out}
 async function saveInsp(){
@@ -524,7 +538,7 @@ VIEWS.profile=()=>{
    ${[['name','Full name','text'],['address','Home address','text'],['phone','Cell phone','tel'],['email','Email','email'],['hired','Date hired','date'],['emerg','Emergency contact (name and phone)','text']].map(([k,l,ty])=>`<label class="f" for="p-${k}">${l}</label><input id="p-${k}" type="${ty}" data-bind="${k}" value="${esc(D[k]||'')}" ${can&&!(k==='email')?'':'readonly'}>`).join('')}
    <label class="f" for="p-title">Job title</label><select id="p-title" data-bind="title" ${isAdmin()||u.id===ME.id?'':'disabled'}>${JOBS.map(j=>`<option ${D.title===j?'selected':''}>${j}</option>`).join('')}</select>
    ${can?'<p></p><button class="btn pri block" data-act="saveProfile">Save profile</button>':''}
-   <p class="small mute">Your address and phone are only seen by the office.</p></div>
+   <p class="small mute">Your address, phone, hire date and emergency contact are only seen by you and the office.</p></div>
   <div class="card"><h2>Certificates and documents</h2><p class="small mute">Attach a photo or PDF of every ticket and card: working at heights, lift licence, first aid, lockout, WHMIS, WSIB papers and anything else.</p>
    ${can?`<button class="btn pri" data-act="addTr" data-v="${esc(u.id)}">Attach a certificate or document</button>`:''}
    ${need.length?`<p class="warnbox small">Not on file yet: ${need.map(courseName).join(', ')}</p>`:''}
@@ -604,7 +618,7 @@ VIEWS.socials=()=>{const cats=['All',...new Set(SOCIALS.map(s=>s.cat))];
   <div class="okbox"><b>Do</b><ul>${s.do.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div><p></p><div class="warnbox"><b>Don't</b><ul>${s.dont.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div><p></p>
   ${s.url?`<a class="btn sm" href="${esc(s.url)}" target="_blank" rel="noopener">Watch: ${esc(s.vt||'video')}</a>`:`<a class="btn sm" href="https://www.youtube.com/results?search_query=${encodeURIComponent(s.q)}" target="_blank" rel="noopener">Find videos on YouTube</a>`}</div>`).join('')}</div>
   <p class="small mute">Video picks are checked and approved every week before they are added.</p>`};
-VIEWS.updates=()=>`<h1>Safety updates</h1><p>Ontario rules and safety news for the electrical trade, checked weekly.</p>
+VIEWS.updates=()=>`<h1>Safety updates</h1><p>Ontario rules and safety news for the electrical trade, added by the weekly safety research agent.</p>
   ${UPDATES.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(u=>`<div class="card" style="margin-bottom:12px"><p class="small mute">${fmtD(u.date)} • ${esc(u.src)}</p><h3>${esc(u.title)}</h3><p>${esc(u.body)}</p><a href="${esc(u.url)}" target="_blank" rel="noopener">Source</a></div>`).join('')}`;
 
 /* ================= COMPANY POLICY ================= */
@@ -632,7 +646,7 @@ VIEWS.policy=()=>{const m=mySig();
   ${policyBody()}${m?'':signBlock(false)}`};
 function guestPolicyView(){
   if(D.done)return `<div class="authwrap"><div class="hero"><div class="stripe"></div><div class="in"><h1>Thank you, ${esc(D.done)}</h1><p class="okbox">Your signed company policy was sent to 20 Vision Electric.</p><p>Hand the phone back to your supervisor.</p></div></div></div>`;
-  return `<header class="top"><div class="logo">20 VISION <b>ELECTRIC</b></div></header><main><h1>Company policy sign-off</h1><p>For new employees, co-op students, subcontractors and visitors. Read each section, then sign at the bottom.</p>${policyBody()}${signBlock(true)}</main>`}
+  return `<header class="top"><div class="logo">20 VISION <b>ELECTRIC</b></div></header><main><h1>Company policy sign-off</h1><p>For new employees, co-op students, subcontractors and visitors. Read each section, then sign at the bottom.</p><p class="warnbox small">Nobody under 16 may be on a construction project in Ontario.</p>${policyBody()}${signBlock(true)}</main>`}
 async function signPolicy(t){
   const guest=t.dataset.v==='1';
   D.read=$('#pol-read').checked;D.minor=$('#pol-minor').checked;

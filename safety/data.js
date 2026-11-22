@@ -53,7 +53,7 @@ const DAILY = [
 const HAZARDS = [
   ['energized', 'Energized equipment / live work', 'Only if de-energizing is not reasonably possible: written procedure, certified electrician, rated PPE, CPR-trained rescuer watching at 300 V or more (s.191).'],
   ['loto', 'Lockout and tagging', 'Lock and tag each source, discharge stored energy, verify dead (s.190).'],
-  ['heights', 'Working at heights (over 3 m)', 'Guardrails first; if not possible, travel restraint, then fall arrest with a written rescue plan (s.26, s.26.1(4)).'],
+  ['heights', 'Working at heights (over 3 m, or 1.2 m+ near water, machinery or hazards)', 'Guardrails first; if not possible, travel restraint, then fall arrest with a written rescue plan (s.26, s.26.1(4)).'],
   ['ladder', 'Ladders', 'CSA Z11 Grade 1/1A/1AA, secured, three points of contact (s.80–83).'],
   ['ewp', 'Scissor lift / boom lift', 'Daily inspection, trained operator, manual on board (s.144–149).'],
   ['ohl', 'Overhead power lines', 'Keep the minimum distance (3 m up to 150 kV); signaller if equipment could encroach (s.188).'],
@@ -143,6 +143,7 @@ const INSP = {
       'Air-tested and inspected by me before use today.|s.193(1)',
       'Leather protectors worn over them.|s.193(3)',
       'Test date within 3 months in service / 6 months in storage (gloves rated over 5,000 V).|s.193(2)',
+      'Class 00 / 0 gloves: lab-tested within the last 6 months and air-tested before each use.|CSA Z462',
       'Arc-rated clothing and face shield match the arc flash label.|CSA Z462',
       'I am trained in their use.|s.193(6)'
     ]},
@@ -318,7 +319,7 @@ const REPORTING = {
   critical: [
     'Call 911 and give first aid. Do not disturb the scene except to save life, relieve suffering or prevent unnecessary damage (OHSA s.51(2)).',
     'Phone the Ministry right away: Health and Safety Contact Centre 1-877-202-0008 (24/7) (OHSA s.51(1)).',
-    'Tell the JHSC or health and safety rep and the union, if any, right away.',
+    'Tell the JHSC or health and safety rep and the union, if any, and the constructor (GC), right away.',
     'Written report to the Ministry, JHSC/rep and union within 48 hours (OHSA s.51(1); content set by O. Reg. 420/21).',
     'WSIB Form 7 within 3 business days (WSIB: 1-800-387-0750).'
   ],
