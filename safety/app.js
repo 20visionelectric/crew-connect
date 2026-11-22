@@ -9,7 +9,8 @@ function saveLocal(k){if(!db)return;try{const tx=db.transaction('kv','readwrite'
 function save(k){saveLocal(k);try{CLOUD.push(k)}catch(e){}}
 /* Cloud sync: Firebase project vision-crew-connect (same logins as 20 Vision Crew Connect).
    Records go to Firestore collections vss_<kind>; photos/files over 40 KB go to vss_files (chunked under 1 MB). */
-const FIREBASE_CONFIG = (location.protocol === 'https:' && /github\.io$|20visionelectric\.com$/.test(location.hostname)) ? {
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const FIREBASE_CONFIG = (NATIVE || (location.protocol === 'https:' && /github\.io$|20visionelectric\.com$/.test(location.hostname))) ? {
   apiKey: "AIzaSyAbt-ULY8uhBIoxklQHEBPPOsfjSR1cQtM", authDomain: "vision-crew-connect.firebaseapp.com", projectId: "vision-crew-connect",
   storageBucket: "vision-crew-connect.firebasestorage.app", messagingSenderId: "808328932749", appId: "1:808328932749:web:3624188efff939c8d0a1c4" } : null;
 const CLOUD = (() => {
@@ -550,7 +551,9 @@ async function saveProfile(){
   Object.assign(u,{name:D.name.trim(),photo:D.photo,address:D.address.trim(),phone:D.phone.trim(),hired:D.hired,emerg:D.emerg.trim(),trade:D.title,updated:now()});
   save('users');if(u.id===ME.id)ME=u;toast('Profile saved.');render()}
 function readFile(f){return new Promise(res=>{if(f.type.startsWith('image/'))return compress(f).then(d=>res(d&&{name:f.name,type:'image/jpeg',data:d}));if(f.size>8e6){toast('That file is over 8 MB. Take a photo of it instead.');return res(null)}const r=new FileReader();r.onload=()=>res({name:f.name,type:f.type||'application/pdf',data:r.result});r.onerror=()=>res(null);r.readAsDataURL(f)})}
+async function nativeShare(name,dataUrl){const P=window.Capacitor.Plugins;const b64=dataUrl.split(',')[1];const r=await P.Filesystem.writeFile({path:name.replace(/[^\w.\-]+/g,'_'),data:b64,directory:'CACHE'});await P.Share.share({title:name,url:r.uri,dialogTitle:'Open or save '+name})}
 function openFile(key){const [id,i]=key.split(':');const t=S.training.find(x=>x.id===id);const files=t.files||[{name:'certificate.jpg',type:'image/jpeg',data:t.photo}];const f=files[+i];if(!f)return;
+  if(NATIVE){nativeShare(f.name,f.data).catch(()=>toast('Could not open the file.'));return}
   try{const b=atob(f.data.split(',')[1]);const u8=new Uint8Array(b.length);for(let j=0;j<b.length;j++)u8[j]=b.charCodeAt(j);const url=URL.createObjectURL(new Blob([u8],{type:f.type}));const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}catch(e){toast('Could not open the file here.')}}
 function addTraining(forUser){
   const target=forUser||ME.id;
@@ -624,7 +627,7 @@ VIEWS.updates=()=>`<h1>Safety updates</h1><p>Ontario rules and safety news for t
 /* ================= COMPANY POLICY ================= */
 const LIVE_URL='https://20visionelectric.github.io/crew-connect/safety/';
 const mySig=()=>ME&&S.policysigs.filter(p=>p.userId===ME.id&&p.version===POLICY_VERSION).sort((a,b)=>b.at.localeCompare(a.at))[0];
-function policyBody(){return `<p class="row noprint"><a class="btn sm" href="policy.pdf" target="_blank" rel="noopener">Open the original PDF</a></p>
+function policyBody(){return `<p class="row noprint"><a class="btn sm" href="${NATIVE?LIVE_URL:''}policy.pdf" target="_blank" rel="noopener">Open the original PDF</a></p>
   ${POLICY.map((p,i)=>`<details class="card" style="margin-bottom:10px" ${i===0?'open':''}><summary style="cursor:pointer"><b style="font-size:18px">${i+1}. ${esc(p.t)}</b></summary><div style="margin-top:10px">${p.b.map(x=>Array.isArray(x)?`<ul>${x.map(li=>`<li style="margin-bottom:6px">${esc(li)}</li>`).join('')}</ul>`:`<p>${esc(x)}</p>`).join('')}<p class="small mute">${esc(POLICY_SIGNER)}</p></div></details>`).join('')}`}
 function signBlock(guest){
   if(D.kind!=='pol')D={kind:'pol',name:guest?'':ME.name,email:guest?'':ME.email,phone:guest?'':(ME.phone||''),role:'Employee',org:'',minor:false,gName:'',read:false};
@@ -761,7 +764,7 @@ const ACT={
   saveInc,
   recf:t=>{recFilter=t.dataset.v;render()},
   openRec:t=>go('record',{k:t.dataset.k,id:t.dataset.v}),
-  print:()=>{try{window.print()}catch(e){toast('Printing is blocked here. Open the app in your browser.')}},
+  print:()=>{if(NATIVE)return toast('To print or save a PDF, open this record on a computer: '+LIVE_URL);try{window.print()}catch(e){toast('Printing is blocked here. Open the app in your browser.')}},
   review:t=>{const r=S.dailies.find(x=>x.id===t.dataset.v);r.review={by:ME.id,at:now()};save('dailies');render()},
   incStep:t=>{const r=S.incidents.find(x=>x.id===t.dataset.k);r.steps[t.dataset.v]={at:now(),by:ME.id};save('incidents');render()},
   investigate:t=>{const r=S.incidents.find(x=>x.id===t.dataset.v);const root=$('#iv-root').value.trim(),fix=$('#iv-fix').value.trim();if(!root||!fix)return toast('Fill in the root cause and the corrective action.');if(!$('#iv-due').value)return toast('Set a due date for the action.');r.investigation={root,fix,by:ME.id,at:now()};save('incidents');S.actions.push({id:uid(),desc:'Incident fix: '+fix,siteId:r.siteId,src:'inc',ref:r.id,at:now(),by:ME.id,due:$('#iv-due').value,status:'open'});save('actions');toast('Investigation saved.');render()},
@@ -788,6 +791,7 @@ function exportData(kind){
   else{const rows=S[kind].map(r=>({date:fmt(r.at||r.inAt),worker:userName(r.userId),site:siteName(r.siteId),gps:locStamp(r.loc),title:recTitle(kind,r),result:recPill(kind,r)[1],details:kind==='insps'?r.fails.join('; '):kind==='talks'?r.att.map(a=>a.name).join('; '):kind==='incidents'?r.desc:kind==='dailies'?r.task:''}));
     const cols=['date','worker','site','gps','title','result','details'];const q=v=>{let x=String(v??'');if(/^[=+\-@]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"'};
     blob=new Blob(['\ufeff'+[cols.join(','),...rows.map(r=>cols.map(c=>q(r[c])).join(','))].join('\n')],{type:'text/csv'});name=`20vision-${kind}-${today()}.csv`}
+  if(NATIVE){const fr=new FileReader();fr.onload=()=>nativeShare(name,fr.result).catch(()=>toast('Could not save the file.'));fr.readAsDataURL(blob);return}
   try{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();toast('Downloaded '+name)}catch(e){toast('Downloads are blocked here. Open the app in your browser.')}
 }
 

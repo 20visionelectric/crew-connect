@@ -109,6 +109,6 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <script src="qr.js"></script>
 <script src="data.js"></script>
 <script src="app.js"></script>
-<script>if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{})</script>
+<script>if("serviceWorker" in navigator&&!window.Capacitor)navigator.serviceWorker.register("sw.js").catch(()=>{})</script>
 </body>
 </html>
