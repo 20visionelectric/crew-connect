@@ -489,7 +489,7 @@ function recTitle(k,r){if(k==='policysigs')return 'Company policy signed by '+r.
 function recPill(k,r){if(k==='policysigs')return r.guest?['warn',r.role||'Guest']:['ok','Signed'];if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans||{}).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
 VIEWS.record=()=>{
   const {k,id}=V.p;const r=S[k].find(x=>x.id===id);if(!r)return '<p>Record not found.</p>';
-  const head=`<div class="row noprint"><button class="btn sm" data-act="tab" data-v="records">Back</button><button class="btn sm" data-act="print">Print / save PDF</button></div><p></p>
+  const head=`<div class="row noprint"><button class="btn sm" data-act="tab" data-v="records">Back</button><button class="btn sm pri" data-act="pdf">Save as PDF</button>${NATIVE?'':'<button class="btn sm" data-act="print">Print</button>'}</div><p></p><div id="rec">
   <div class="hero"><div class="stripe"></div><div class="in"><p class="small mute">20 Vision Electric Inc. • ${esc(KIND[k][0])}</p><h1>${esc(recTitle(k,r))}</h1>
   <dl class="kv"><dt>Date</dt><dd>${fmt(r.at||r.inAt)}</dd><dt>By</dt><dd>${esc(r.userId?userName(r.userId):r.name||'')}</dd><dt>Site</dt><dd>${esc(siteName(r.siteId))}</dd><dt>GPS</dt><dd>${esc(locStamp(r.loc))}${r.loc?` • <a href="https://maps.google.com/?q=${r.loc.lat},${r.loc.lng}" target="_blank" rel="noopener">map</a>`:''}</dd></dl></div></div><p></p>`;
   let body='';
@@ -507,7 +507,7 @@ VIEWS.record=()=>{
   if(k==='checkins')body=`<div class="card"><dl class="kv"><dt>Arrived</dt><dd>${fmt(r.inAt)}</dd><dt>Left</dt><dd>${fmt(r.outAt)||'Still on site'}</dd><dt>Distance</dt><dd>${r.dist!=null?r.dist+' m from site pin':'Site has no pin'}</dd><dt>Flag</dt><dd>${esc(r.reason||'None')}</dd><dt>Location logs</dt><dd>${(r.pings||[]).length}</dd></dl></div>`;
   if(k==='incidents')body=incBody(r);
   if(k==='policysigs')body=`<div class="card"><p>${esc(POLICY_AGREE)}</p><dl class="kv"><dt>Name</dt><dd>${esc(r.name)}</dd><dt>Role</dt><dd>${esc(r.role||'Employee')}</dd>${r.org?`<dt>School / company</dt><dd>${esc(r.org)}</dd>`:''}${r.email?`<dt>Email</dt><dd>${esc(r.email)}</dd>`:''}${r.phone?`<dt>Phone</dt><dd>${esc(r.phone)}</dd>`:''}<dt>Policy version</dt><dd>${esc(r.version)}</dd><dt>Signed</dt><dd>${fmt(r.at)}</dd></dl><h3>Signature</h3><img src="${img(r.sig)}" alt="Signature" style="max-width:280px;background:#fff">${r.minor?`<h3>Parent / guardian</h3><p>${esc(r.gName)}</p><img src="${img(r.gSig)}" alt="Guardian signature" style="max-width:280px;background:#fff">`:''}<p class="small mute">Policy issued by ${esc(POLICY_SIGNER)}</p></div>`;
-  return head+body};
+  return head+body+'</div>'};
 function incBody(r){
   const t=new Date(r.when||r.at);const dl=h=>new Date(t.getTime()+h*36e5);
   const deadlines={critical:[['Phone Ministry (1-877-202-0008)',0],['Written report to Ministry, JHSC/rep, union',48],['WSIB Form 7',72]],medical:[['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],lost:[['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],shock:[['Medical assessment',0],['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],property:[['Check if s.53 notice is needed (2 days)',48]]}[r.type]||[];
@@ -551,9 +551,23 @@ async function saveProfile(){
   Object.assign(u,{name:D.name.trim(),photo:D.photo,address:D.address.trim(),phone:D.phone.trim(),hired:D.hired,emerg:D.emerg.trim(),trade:D.title,updated:now()});
   save('users');if(u.id===ME.id)ME=u;toast('Profile saved.');render()}
 function readFile(f){return new Promise(res=>{if(f.type.startsWith('image/'))return compress(f).then(d=>res(d&&{name:f.name,type:'image/jpeg',data:d}));if(f.size>8e6){toast('That file is over 8 MB. Take a photo of it instead.');return res(null)}const r=new FileReader();r.onload=()=>res({name:f.name,type:f.type||'application/pdf',data:r.result});r.onerror=()=>res(null);r.readAsDataURL(f)})}
+async function openWith(name,dataUrl){const P=window.Capacitor.Plugins;const mime=(dataUrl.match(/^data:([^;,]+)/)||[])[1]||'application/octet-stream';const r=await P.Filesystem.writeFile({path:name.replace(/[^\w.\-]+/g,'_'),data:dataUrl.split(',')[1],directory:'CACHE'});
+  try{await P.FileOpener.open({filePath:r.uri,contentType:mime,openWithDefault:false})}catch(e){await P.Share.share({title:name,url:r.uri,dialogTitle:'Open '+name})}}
+function loadScript(src){return new Promise((res,rej)=>{if(document.querySelector('script[data-src="'+src+'"]'))return res();const sc=document.createElement('script');sc.src=src;sc.dataset.src=src;sc.onload=res;sc.onerror=rej;document.head.appendChild(sc)})}
+async function savePDF(el,name){
+  toast('Making the PDF…');
+  try{await loadScript('html2canvas.js');await loadScript('jspdf.js')}catch(e){return toast('Could not load the PDF maker. Check your connection.')}
+  document.body.classList.add('pdfmode');
+  try{const c=await html2canvas(el,{scale:1.6,backgroundColor:'#ffffff',useCORS:true});
+    const pdf=new window.jspdf.jsPDF({unit:'pt',format:'letter'});const W=pdf.internal.pageSize.getWidth()-48,H=pdf.internal.pageSize.getHeight()-48;
+    const pxPerPt=c.width/W,pageH=Math.floor(H*pxPerPt);
+    for(let y=0,p=0;y<c.height;y+=pageH,p++){if(p&&c.height-y<30)break;const sl=document.createElement('canvas');sl.width=c.width;sl.height=Math.min(pageH,c.height-y);sl.getContext('2d').drawImage(c,0,y,c.width,sl.height,0,0,c.width,sl.height);if(p)pdf.addPage();pdf.addImage(sl.toDataURL('image/jpeg',.85),'JPEG',24,24,W,sl.height/pxPerPt)}
+    const uri=pdf.output('datauristring').replace(/;filename=[^;]*;/,';');
+    if(NATIVE)await openWith(name,uri);else pdf.save(name)}
+  catch(e){toast('Could not make the PDF.')}finally{document.body.classList.remove('pdfmode')}}
 async function nativeShare(name,dataUrl){const P=window.Capacitor.Plugins;const b64=dataUrl.split(',')[1];const r=await P.Filesystem.writeFile({path:name.replace(/[^\w.\-]+/g,'_'),data:b64,directory:'CACHE'});await P.Share.share({title:name,url:r.uri,dialogTitle:'Open or save '+name})}
 function openFile(key){const [id,i]=key.split(':');const t=S.training.find(x=>x.id===id);const files=t.files||[{name:'certificate.jpg',type:'image/jpeg',data:t.photo}];const f=files[+i];if(!f)return;
-  if(NATIVE){nativeShare(f.name,f.data).catch(()=>toast('Could not open the file.'));return}
+  if(NATIVE){openWith(f.name,f.data).catch(()=>toast('Could not open the file.'));return}
   try{const b=atob(f.data.split(',')[1]);const u8=new Uint8Array(b.length);for(let j=0;j<b.length;j++)u8[j]=b.charCodeAt(j);const url=URL.createObjectURL(new Blob([u8],{type:f.type}));const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}catch(e){toast('Could not open the file here.')}}
 function addTraining(forUser){
   const target=forUser||ME.id;
@@ -627,7 +641,7 @@ VIEWS.updates=()=>`<h1>Safety updates</h1><p>Ontario rules and safety news for t
 /* ================= COMPANY POLICY ================= */
 const LIVE_URL='https://20visionelectric.github.io/crew-connect/safety/';
 const mySig=()=>ME&&S.policysigs.filter(p=>p.userId===ME.id&&p.version===POLICY_VERSION).sort((a,b)=>b.at.localeCompare(a.at))[0];
-function policyBody(){return `<p class="row noprint"><a class="btn sm" href="${NATIVE?LIVE_URL:''}policy.pdf" target="_blank" rel="noopener">Open the original PDF</a></p>
+function policyBody(){return `<p class="row noprint">${NATIVE?'<button class="btn sm" data-act="policyPdf">Open the original PDF</button>':'<a class="btn sm" href="policy.pdf" target="_blank" rel="noopener">Open the original PDF</a>'}</p>
   ${POLICY.map((p,i)=>`<details class="card" style="margin-bottom:10px" ${i===0?'open':''}><summary style="cursor:pointer"><b style="font-size:18px">${i+1}. ${esc(p.t)}</b></summary><div style="margin-top:10px">${p.b.map(x=>Array.isArray(x)?`<ul>${x.map(li=>`<li style="margin-bottom:6px">${esc(li)}</li>`).join('')}</ul>`:`<p>${esc(x)}</p>`).join('')}<p class="small mute">${esc(POLICY_SIGNER)}</p></div></details>`).join('')}`}
 function signBlock(guest){
   if(D.kind!=='pol')D={kind:'pol',name:guest?'':ME.name,email:guest?'':ME.email,phone:guest?'':(ME.phone||''),role:'Employee',org:'',minor:false,gName:'',read:false};
@@ -764,7 +778,9 @@ const ACT={
   saveInc,
   recf:t=>{recFilter=t.dataset.v;render()},
   openRec:t=>go('record',{k:t.dataset.k,id:t.dataset.v}),
-  print:()=>{if(NATIVE)return toast('To print or save a PDF, open this record on a computer: '+LIVE_URL);try{window.print()}catch(e){toast('Printing is blocked here. Open the app in your browser.')}},
+  print:()=>{try{window.print()}catch(e){toast('Printing is blocked here.')}},
+  pdf:()=>{const el=$('#rec');if(!el)return;const t=(el.querySelector('h1')?.textContent||'record').replace(/[^\w]+/g,'-').slice(0,60);savePDF(el,'20Vision-'+t+'-'+today()+'.pdf')},
+  policyPdf:async()=>{if(!NATIVE)return;try{const r=await fetch('policy.pdf');const b=await r.blob();const fr=new FileReader();fr.onload=()=>openWith('20-Vision-Company-Policy.pdf',fr.result).catch(()=>toast('Could not open the PDF.'));fr.readAsDataURL(b)}catch(e){toast('Could not open the PDF.')}},
   review:t=>{const r=S.dailies.find(x=>x.id===t.dataset.v);r.review={by:ME.id,at:now()};save('dailies');render()},
   incStep:t=>{const r=S.incidents.find(x=>x.id===t.dataset.k);r.steps[t.dataset.v]={at:now(),by:ME.id};save('incidents');render()},
   investigate:t=>{const r=S.incidents.find(x=>x.id===t.dataset.v);const root=$('#iv-root').value.trim(),fix=$('#iv-fix').value.trim();if(!root||!fix)return toast('Fill in the root cause and the corrective action.');if(!$('#iv-due').value)return toast('Set a due date for the action.');r.investigation={root,fix,by:ME.id,at:now()};save('incidents');S.actions.push({id:uid(),desc:'Incident fix: '+fix,siteId:r.siteId,src:'inc',ref:r.id,at:now(),by:ME.id,due:$('#iv-due').value,status:'open'});save('actions');toast('Investigation saved.');render()},
