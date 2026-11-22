@@ -5,7 +5,7 @@ const S={users:[],sites:[],checkins:[],dailies:[],insps:[],equip:[],talks:[],inc
 let db=null;
 function idb(){return new Promise(res=>{try{const r=indexedDB.open('vss',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)}catch(e){res(null)}})}
 function get(k){return new Promise(res=>{if(!db)return res(undefined);try{const q=db.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(undefined)}catch(e){res(undefined)}})}
-function saveLocal(k){if(!db)return;try{db.transaction('kv','readwrite').objectStore('kv').put(S[k],k)}catch(e){toast('Could not save on this phone. Storage may be full.')}}
+function saveLocal(k){if(!db)return;try{const tx=db.transaction('kv','readwrite');tx.onerror=tx.onabort=()=>toast('Could not save on this phone. Storage may be full.');tx.objectStore('kv').put(S[k],k)}catch(e){toast('Could not save on this phone. Storage may be full.')}}
 function save(k){saveLocal(k);try{CLOUD.push(k)}catch(e){}}
 /* Cloud sync: Firebase project vision-crew-connect (same logins as 20 Vision Crew Connect).
    Records go to Firestore collections vss_<kind>; photos/files over 40 KB go to vss_files (chunked under 1 MB). */
@@ -109,9 +109,10 @@ const CLOUD = (() => {
   function pushAll() { KINDS.forEach(push); push('cordocs'); }
   async function resume() { const u = await new Promise(r => { const off = auth.onAuthStateChanged(x => { off(); r(x); }); }); if (u) { await checkAdmin(u); ready = true; status = 'on'; await pull(); pushAll(); } return u; }
   async function signOut() { try { await auth?.signOut(); } catch (e) {} ready = false; status = 'signed-out'; }
+  async function remove(kind, id) { if (!ready || !fs) return; try { await fs.collection('vss_' + kind).doc(id).delete(); } catch (e) {} }
   async function guestSign(rec) { if (!await init()) throw new Error('offline'); await fs.collection('vss_policysigs').doc(rec.id).set(rec); }
   const label = () => status === 'on' ? 'Saved to cloud' : 'Cloud: ' + status;
-  return { init, signIn, reset, guestSign, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
+  return { init, signIn, reset, guestSign, remove, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
 })();
 
 let ME=null;
@@ -127,7 +128,9 @@ const today=()=>new Date().toLocaleDateString('en-CA');
 const dayOf=iso=>new Date(iso).toLocaleDateString('en-CA');
 const fmt=iso=>iso?new Date(iso).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'}):'';
 const fmtD=d=>d?new Date(d+'T12:00').toLocaleDateString('en-CA',{dateStyle:'medium'}):'';
-const daysSince=d=>Math.floor((Date.now()-new Date(d.length===10?d+'T12:00':d))/864e5);
+const daysSince=d=>d.length===10?Math.round((Date.parse(today()+'T00:00')-Date.parse(d+'T00:00'))/864e5):Math.floor((Date.now()-new Date(d))/864e5);
+const dayWord=n=>n===1?'1 day':n+' days';
+const img=v=>typeof v==='string'&&/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)?v:'';
 const addMonths=(d,m)=>{const x=new Date(d+'T12:00');x.setMonth(x.getMonth()+m);return x.toLocaleDateString('en-CA')};
 const userName=id=>(S.users.find(u=>u.id===id)||{}).name||'Unknown';
 const siteName=id=>(S.sites.find(s=>s.id===id)||{}).name||'No site';
@@ -145,8 +148,9 @@ function getLoc(){return new Promise((res,rej)=>{
       rej(e.code===1?'Location is turned off or blocked for this app. Turn on location in your phone settings and allow it for this app, then try again.':'Could not get your location. Step outside or near a window and try again.')},
     {enableHighAccuracy:true,timeout:20000,maximumAge:0})})}
 function compress(file){return new Promise(res=>{const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const m=1280,k=Math.min(1,m/Math.max(i.width,i.height));const c=document.createElement('canvas');c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);const x=c.getContext('2d');x.drawImage(i,0,0,c.width,c.height);x.fillStyle='rgba(0,0,0,.55)';x.fillRect(0,c.height-28,c.width,28);x.fillStyle='#fff';x.font='16px sans-serif';x.fillText('20 Vision Site Safety • '+new Date().toLocaleString('en-CA'),8,c.height-9);res(c.toDataURL('image/jpeg',.72))};i.onerror=()=>res(null);i.src=r.result};r.onerror=()=>res(null);r.readAsDataURL(file)})}
-function ask(title,body,okLabel='OK',danger){return new Promise(res=>{const m=document.createElement('div');m.className='modal';m.innerHTML=`<div class="card"><h3>${esc(title)}</h3><p>${body}</p><div class="row"><button class="btn ${danger?'red':'pri'}" data-x="1">${esc(okLabel)}</button><button class="btn" data-x="0">Cancel</button></div></div>`;m.onclick=e=>{const b=e.target.closest('[data-x]');if(b){m.remove();res(b.dataset.x==='1')}};document.body.appendChild(m)})}
-function activeCheckin(){return S.checkins.find(c=>c.userId===ME.id&&!c.outAt&&dayOf(c.inAt)===today())}
+function tell(title,body){return ask(title,body,'OK',false,true)}
+function ask(title,body,okLabel='OK',danger,single){return new Promise(res=>{const m=document.createElement('div');m.className='modal';m.innerHTML=`<div class="card"><h3>${esc(title)}</h3><p>${body}</p><div class="row"><button class="btn ${danger?'red':'pri'}" data-x="1">${esc(okLabel)}</button>${single?'':'<button class="btn" data-x="0">Cancel</button>'}</div></div>`;m.onclick=e=>{const b=e.target.closest('[data-x]');if(b){m.remove();res(b.dataset.x==='1')}};document.body.appendChild(m)})}
+function activeCheckin(){let ch=false;for(const c of S.checkins)if(c.userId===ME.id&&!c.outAt&&Date.now()-new Date(c.inAt)>18*36e5){c.outAt=new Date(new Date(c.inAt).getTime()+12*36e5).toISOString();c.autoClosed=true;ch=true}if(ch)save('checkins');return S.checkins.find(c=>c.userId===ME.id&&!c.outAt)}
 function locStamp(l){if(!l)return '';return `${l.lat}, ${l.lng} (±${l.acc} m)${l.demo?' • PREVIEW ONLY':''}`}
 
 /* ================= view state ================= */
@@ -160,7 +164,7 @@ function render(){
   if(location.hash==='#sign-policy'){try{history.replaceState(null,'',location.pathname)}catch(e){}V={view:'policy',p:{}}}
   const v=VIEWS[V.view]||VIEWS.home;
   const ci=activeCheckin();
-  app.innerHTML=`<header class="top"><div class="logo">20 VISION <b>SITE SAFETY</b></div><div class="who" data-act="go" data-v="profile" style="cursor:pointer">${ME.photo?`<img src="${ME.photo}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px">`:''}${esc(ME.name)}<br><span class="small">${ci?'On site: '+esc(siteName(ci.siteId)):'Not checked in'} • <span id="cloudst">${CLOUD.on?CLOUD.label():'Saved on this phone'}</span></span></div></header>
+  app.innerHTML=`<header class="top"><div class="logo">20 VISION <b>SITE SAFETY</b></div><div class="who" data-act="go" data-v="profile" style="cursor:pointer">${ME.photo?`<img src="${img(ME.photo)}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px">`:''}${esc(ME.name)}<br><span class="small">${ci?'On site: '+esc(siteName(ci.siteId)):'Not checked in'} • <span id="cloudst">${CLOUD.on?CLOUD.label():'Saved on this phone'}</span></span></div></header>
   <main>${PREVIEW?'<p class="infobox small noprint">Preview: this window blocks location and camera, so a test location is used and records are marked PREVIEW ONLY. On the crew\'s phones the real location is required.</p>':''}${v()}</main>
   <nav class="tabs">${TABS.map(t=>`<button data-act="tab" data-v="${t[0]}" class="${tabOf(V.view)===t[0]?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${t[2]}"/></svg>${t[1]}</button>`).join('')}</nav>`;
   bindSig();
@@ -239,11 +243,11 @@ function dueItems(){
   if(!mySig())out.push(['bad','Read and sign the company policy (Policy tab).']);
   if(isOffice()){const miss=S.users.filter(u=>u.active!==false&&u.id!==ME.id&&!S.policysigs.some(p=>p.userId===u.id&&p.version===POLICY_VERSION));if(miss.length)out.push(['warn',`${miss.length} worker(s) have not signed the company policy.`])}
   const myTr=S.training.filter(t=>isOffice()||t.userId===ME.id);
-  for(const t of myTr)if(t.expiry){const d=-daysSince(t.expiry);if(d<0)out.push(['bad',`${userName(t.userId)}: ${courseName(t.course)} expired`]);else if(d<=45)out.push(['warn',`${userName(t.userId)}: ${courseName(t.course)} expires in ${d} days`])}
+  for(const t of myTr)if(t.expiry){const d=-daysSince(t.expiry),nm=t.course==='other'&&t.label?t.label:courseName(t.course);if(d<0)out.push(['bad',`${userName(t.userId)}: ${nm} expired`]);else if(d<=45)out.push(['warn',`${userName(t.userId)}: ${nm} expires in ${dayWord(d)}`])}
   for(const q of S.equip)if(q.status==='out')out.push(['bad',`Out of service: ${INSP[q.type]?.name||q.type} ${q.serial}`]);
   const open=S.actions.filter(a=>a.status!=='closed'&&(isOffice()||a.assignee===ME.id));
   for(const a of open)out.push([a.due&&a.due<today()?'bad':'warn','Corrective action: '+a.desc.slice(0,80)]);
-  if(isOffice()){for(const c of S.checkins.filter(c=>daysSince(c.inAt)<=14&&!S.dailies.some(d=>d.checkinId===c.id)))out.push(['bad',`${userName(c.userId)} worked at ${siteName(c.siteId)} on ${fmtD(dayOf(c.inAt))} with no daily safety check`])}
+  if(isOffice()){for(const c of S.checkins.filter(c=>daysSince(c.inAt)<=14&&(c.outAt||Date.now()-new Date(c.inAt)>45*6e4)&&!S.dailies.some(d=>d.checkinId===c.id)))out.push(['bad',`${userName(c.userId)} worked at ${siteName(c.siteId)} on ${fmtD(dayOf(c.inAt))} with no daily safety check`])}
   if(isOffice()){const lastTalk=S.talks.map(t=>t.at).sort().pop();if(!lastTalk||daysSince(lastTalk)>7)out.push(['warn','No toolbox talk logged in the last 7 days.'])}
   return out}
 const VIEWS={};
@@ -279,10 +283,10 @@ VIEWS.checkin=()=>{
   const sites=S.sites.filter(s=>s.active!==false);
   if(!sites.length)return `<h1>Check in</h1><div class="infobox">No job sites yet. ${isAdmin()?'<button class="btn sm" data-act="go" data-v="sites">Add a site</button>':'Ask the office to add your job site.'}</div>`;
   return `<h1>Check in to a site</h1><p>Your location is recorded with every check-in, checklist, inspection and talk. This is the proof COR auditors and inspectors look for.</p>
-  <div class="card">${sites.map(s=>`<div class="chk"><div><b>${esc(s.name)}</b><div class="small mute">${esc(s.address||'')}</div></div><button class="btn pri sm" data-act="doCheckin" data-v="${s.id}">Check in here</button></div>`).join('')}</div>`};
+  <div class="card">${sites.map(s=>`<div class="chk"><div><b>${esc(s.name)}</b><div class="small mute">${esc(s.address||'')}</div></div><button class="btn pri sm" data-act="doCheckin" data-v="${esc(s.id)}">Check in here</button></div>`).join('')}</div>`};
 async function doCheckin(siteId){
   toast('Getting your location…');
-  let loc;try{loc=await getLoc()}catch(m){return ask('Location needed',esc(m),'OK')}
+  let loc;try{loc=await getLoc()}catch(m){return tell('Location needed',esc(m),'OK')}
   const s=S.sites.find(x=>x.id===siteId);
   let d=null,far=false;
   if(s.lat!=null){d=Math.round(dist(loc.lat,loc.lng,s.lat,s.lng));far=d>(s.radius||300)}
@@ -324,7 +328,7 @@ async function saveDaily(){
   if(nos.length&&!D.notes.trim())return toast('You answered No to something. Explain it in the notes.');
   if(!D.sig)return toast('Sign the daily check.');
   if(D.hz.confined||D.hz.asbestos){if(!await ask('Stop-work hazard','You selected confined space or possible asbestos. Do not start that work. The office will be told. Submit?','Submit'))return}
-  const loc=await ping();if(!loc)return ask('Location needed','Turn on location to submit. Your location proves you were on site.','OK');
+  const loc=await ping();if(!loc)return tell('Location needed','Turn on location to submit. Your location proves you were on site.');
   const ci=activeCheckin();
   const r={id:uid(),userId:ME.id,siteId:ci.siteId,checkinId:ci.id,at:now(),loc,ans:D.ans,hz:D.hz,task:D.task,notes:D.notes,sig:D.sig};
   S.dailies.push(r);save('dailies');
@@ -347,7 +351,7 @@ VIEWS.inspform=()=>{
   const known=S.equip.filter(q=>q.type===D.type);
   return `<h1>${esc(t.name)}</h1><p class="mute">Pre-use inspection • COR elements 7 and 9</p>
   ${known.length?`<div class="card"><label class="f" for="i-pick">Pick from equipment list (optional)</label><select id="i-pick" data-act-change="pickEquip"><option value="">New item</option>${known.map(q=>`<option value="${q.id}" ${D.equipId===q.id?'selected':''}>${esc(q.serial)}${q.status==='out'?' (OUT OF SERVICE)':''}</option>`).join('')}</select></div><p></p>`:''}
-  <div class="card"><h3>Photos (all required)</h3><div class="photos">${t.photos.map((p,i)=>`<label class="ph ${D.photos[i]?'done':''}" id="ph-${i}">${D.photos[i]?`<img src="${D.photos[i]}" alt="">`:esc(p)}<input type="file" accept="image/*" capture="environment" data-photo="${i}" aria-label="${esc(p)}"></label>`).join('')}</div></div><p></p>
+  <div class="card"><h3>Photos (all required)</h3><div class="photos">${t.photos.map((p,i)=>`<label class="ph ${D.photos[i]?'done':''}" id="ph-${i}">${D.photos[i]?`<img src="${img(D.photos[i])}" alt="">`:esc(p)}<input type="file" accept="image/*" capture="environment" data-photo="${i}" aria-label="${esc(p)}"></label>`).join('')}</div></div><p></p>
   <div class="card"><h3>Details</h3>${t.fields.map(([k,l,ty])=>`<label class="f" for="if-${k}">${esc(l)}</label><input id="if-${k}" type="${ty}" data-bind="f.${k}" value="${esc(D.f[k]||'')}">`).join('')}</div><p></p>
   <div class="card"><h3>Checks</h3>${t.items.map((it,i)=>{const [txt,ref]=it.split('|');return chkRow('c'+i,txt,ref,D.ans)}).join('')}
   <label class="f" for="i-notes">Notes / defects found</label><textarea id="i-notes" data-bind="notes">${esc(D.notes||'')}</textarea></div><p></p>
@@ -369,7 +373,7 @@ async function saveInsp(){
   const missF=t.fields.filter(([k])=>!String(D.f[k]||'').trim());
   if(missF.length)return toast('Fill in: '+missF.map(x=>x[1]).join(', '));
   if(t.items.some((_,i)=>!D.ans['c'+i]))return toast('Answer every check.');
-  const loc=await ping();if(!loc)return ask('Location needed','Turn on location to save. It proves the inspection was done on site.','OK');
+  const loc=await ping();if(!loc)return tell('Location needed','Turn on location to save. It proves the inspection was done on site.');
   const fails=t.items.map((it,i)=>D.ans['c'+i]==='n'?it.split('|')[0]:null).filter(Boolean);
   const dateFails=dateRules(D.type,D.f);
   const pass=!fails.length&&!dateFails.length;
@@ -383,7 +387,7 @@ async function saveInsp(){
   if(!pass)addAction(`${t.name} ${serial} failed: ${r.fails.join('; ')}`,ci.siteId,'insp',r.id);
   D={};
   if(pass){toast('Inspection passed and saved.');go('inspect')}
-  else{await ask('FAILED: do not use',`<b>Tag it out of service now.</b><br>${r.fails.map(esc).join('<br>')}<br><br>A corrective action has been created for the office.`,'OK',true);go('inspect')}
+  else{await tell('FAILED: do not use',`<b>Tag it out of service now.</b><br>${r.fails.map(esc).join('<br>')}<br><br>A corrective action has been created for the office.`);go('inspect')}
 }
 
 /* ================= TOOLBOX TALKS ================= */
@@ -392,9 +396,9 @@ VIEWS.talks=()=>{
   const cats=[...new Set(TALKS.map(t=>t.cat))];
   return `<h1>Toolbox talks</h1><p>Pick a topic, read it to the crew, then have everyone sign. Hold one at least weekly (COR element 8.2).</p>
   ${!activeCheckin()?'<div class="warnbox">Check in on site to run a talk. <button class="btn sm" data-act="go" data-v="checkin">Check in</button></div><p></p>':''}
-  ${cats.map(c=>`<h3>${esc(c)}</h3><div class="tiles">${TALKS.filter(t=>t.cat===c).map(t=>`<button class="tile" data-act="startTalk" data-v="${t.id}"><b>${esc(t.title)}</b><span>${esc(t.ref)}</span></button>`).join('')}</div><p></p>`).join('')}
+  ${cats.map(c=>`<h3>${esc(c)}</h3><div class="tiles">${TALKS.filter(t=>t.cat===c).map(t=>`<button class="tile" data-act="startTalk" data-v="${esc(t.id)}"><b>${esc(t.title)}</b><span>${esc(t.ref)}</span></button>`).join('')}</div><p></p>`).join('')}
   <button class="btn" data-act="startTalk" data-v="custom">Custom topic</button>
-  ${recent.length?`<p></p><div class="card"><h3>Recent talks</h3><div class="list">${recent.map(t=>`<div class="it" data-act="openRec" data-k="talks" data-v="${t.id}"><div class="m"><b>${esc(t.title)}</b><div class="small mute">${fmt(t.at)} • ${esc(siteName(t.siteId))} • ${t.att.length} signed</div></div></div>`).join('')}</div></div>`:''}`};
+  ${recent.length?`<p></p><div class="card"><h3>Recent talks</h3><div class="list">${recent.map(t=>`<div class="it" data-act="openRec" data-k="talks" data-v="${esc(t.id)}"><div class="m"><b>${esc(t.title)}</b><div class="small mute">${fmt(t.at)} • ${esc(siteName(t.siteId))} • ${t.att.length} signed</div></div></div>`).join('')}</div></div>`:''}`};
 VIEWS.talkrun=()=>{
   if(!activeCheckin())return needCheckin();
   const custom=D.topicId==='custom';
@@ -402,7 +406,7 @@ VIEWS.talkrun=()=>{
   ${custom?`<div class="card"><label class="f" for="t-title">Topic</label><input id="t-title" data-bind="title" value="${esc(D.title||'')}"><label class="f" for="t-pts">Key points</label><textarea id="t-pts" data-bind="customPts">${esc(D.customPts||'')}</textarea></div>`
   :`<div class="card"><h3>Key points</h3><ol>${D.points.map(p=>`<li style="margin-bottom:8px">${esc(p)}</li>`).join('')}</ol><h3>Ask the crew</h3><ul>${D.qs.map(p=>`<li>${esc(p)}</li>`).join('')}</ul><p class="small mute">Reference: ${esc(D.ref)}</p></div>`}<p></p>
   <div class="card"><label class="f" for="t-notes">Crew questions, concerns and site-specific points</label><textarea id="t-notes" data-bind="notes">${esc(D.notes||'')}</textarea></div><p></p>
-  <div class="card"><h3>Attendance (${D.att.length})</h3><div class="list">${D.att.map((a,i)=>`<div class="it"><img src="${a.sig}" alt="" style="width:90px;height:40px;object-fit:contain;background:#fff;border-radius:6px"><div class="m"><b>${esc(a.name)}</b><div class="small mute">${esc(a.company||'20 Vision Electric')}</div></div><button class="btn sm" data-act="rmAtt" data-v="${i}">Remove</button></div>`).join('')}</div>
+  <div class="card"><h3>Attendance (${D.att.length})</h3><div class="list">${D.att.map((a,i)=>`<div class="it"><img src="${img(a.sig)}" alt="" style="width:90px;height:40px;object-fit:contain;background:#fff;border-radius:6px"><div class="m"><b>${esc(a.name)}</b><div class="small mute">${esc(a.company||'20 Vision Electric')}</div></div><button class="btn sm" data-act="rmAtt" data-v="${i}">Remove</button></div>`).join('')}</div>
   <button class="btn" data-act="addAtt">Add worker and signature</button></div><p></p>
   <button class="btn pri block" data-act="saveTalk">Finish and save talk</button>`};
 function addAttendee(){
@@ -422,7 +426,7 @@ function addAttendee(){
 async function saveTalk(){
   if(D.topicId==='custom'){if(!D.title?.trim()||!D.customPts?.trim())return toast('Add a topic and key points.');D.points=D.customPts.split('\n').filter(Boolean)}
   if(!D.att.length)return toast('At least one worker must sign.');
-  const loc=await ping();if(!loc)return ask('Location needed','Turn on location to save the talk.','OK');
+  const loc=await ping();if(!loc)return tell('Location needed','Turn on location to save the talk.');
   const ci=activeCheckin();
   S.talks.push({id:uid(),userId:ME.id,leader:ME.name,siteId:ci.siteId,at:now(),loc,topicId:D.topicId,title:D.title,points:D.points,notes:D.notes||'',att:D.att});save('talks');
   D={};toast('Toolbox talk saved.');go('talks')}
@@ -442,7 +446,7 @@ VIEWS.incident=()=>{
   <label class="f" for="n-wit">Witnesses</label><input id="n-wit" data-bind="witness" value="${esc(D.witness)}">
   <label class="f" for="n-imm">What was done right away to make it safe?</label><textarea id="n-imm" data-bind="immediate">${esc(D.immediate)}</textarea>
   <label class="f" for="n-cause">Why do you think it happened?</label><textarea id="n-cause" data-bind="cause">${esc(D.cause)}</textarea>
-  <h3 style="margin-top:14px">Photos</h3><div class="photos">${[0,1,2,3].map(i=>`<label class="ph ${D.photos[i]?'done':''}" id="ph-${i}">${D.photos[i]?`<img src="${D.photos[i]}" alt="">`:'Add photo'}<input type="file" accept="image/*" capture="environment" data-photo="${i}" aria-label="Incident photo ${i+1}"></label>`).join('')}</div></div><p></p>
+  <h3 style="margin-top:14px">Photos</h3><div class="photos">${[0,1,2,3].map(i=>`<label class="ph ${D.photos[i]?'done':''}" id="ph-${i}">${D.photos[i]?`<img src="${img(D.photos[i])}" alt="">`:'Add photo'}<input type="file" accept="image/*" capture="environment" data-photo="${i}" aria-label="Incident photo ${i+1}"></label>`).join('')}</div></div><p></p>
   <button class="btn red block" data-act="saveInc">Submit report</button>`};
 function repBox(t){const r=REPORTING[t];if(!r)return '';return `<div class="${['critical','medical','lost','shock'].includes(t)?'warnbox':'infobox'}" style="margin-top:12px"><b>Ontario reporting for this type</b><ul>${r.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`}
 async function saveInc(){
@@ -465,9 +469,9 @@ VIEWS.records=()=>{
   return `<h1>Records</h1><p class="mute">${isOffice()?'Everyone\'s records on this device.':'Your records.'} Every record keeps its time, location and signature for COR evidence.</p>
   <div class="chips">${[['all','All'],...Object.entries(KIND).map(([k,v])=>[k,v[0]+'s'])].map(([k,l])=>`<button class="chip ${recFilter===k?'on':''}" data-act="recf" data-v="${k}">${esc(l)}</button>`).join('')}</div>
   <label class="f" for="r-site">Site</label><select id="r-site" data-act-change="recsite"><option value="">All sites</option>${S.sites.map(s=>`<option value="${s.id}" ${recSite===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select><p></p>
-  <div class="card">${rows.length?`<div class="list">${rows.slice(0,200).map(([k,r])=>`<div class="it" data-act="openRec" data-k="${k}" data-v="${r.id}"><span class="pill ${recPill(k,r)[0]}">${esc(KIND[k][0])}</span><div class="m"><b>${esc(recTitle(k,r))}</b><div class="small mute">${fmt(r.at||r.inAt)} • ${esc(userName(r.userId))} • ${esc(siteName(r.siteId))}</div></div><span class="small">${esc(recPill(k,r)[1])}</span></div>`).join('')}</div>`:'<p class="mute">No records yet.</p>'}</div>`};
+  <div class="card">${rows.length?`<div class="list">${rows.slice(0,200).map(([k,r])=>`<div class="it" data-act="openRec" data-k="${k}" data-v="${esc(r.id)}"><span class="pill ${recPill(k,r)[0]}">${esc(KIND[k][0])}</span><div class="m"><b>${esc(recTitle(k,r))}</b><div class="small mute">${fmt(r.at||r.inAt)} • ${esc(userName(r.userId))} • ${esc(siteName(r.siteId))}</div></div><span class="small">${esc(recPill(k,r)[1])}</span></div>`).join('')}</div>`:'<p class="mute">No records yet.</p>'}</div>`};
 function recTitle(k,r){if(k==='policysigs')return 'Company policy signed by '+r.name;return k==='insps'?(INSP[r.type]?.name||r.type)+' '+(r.f?.serial||''):k==='talks'?r.title:k==='incidents'?(INC_TYPES.find(t=>t[0]===r.type)||[])[1]:k==='dailies'?(r.task||'Daily check').slice(0,60):'Checked in'}
-function recPill(k,r){if(k==='policysigs')return r.guest?['warn',r.role||'Guest']:['ok','Signed'];if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
+function recPill(k,r){if(k==='policysigs')return r.guest?['warn',r.role||'Guest']:['ok','Signed'];if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans||{}).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
 VIEWS.record=()=>{
   const {k,id}=V.p;const r=S[k].find(x=>x.id===id);if(!r)return '<p>Record not found.</p>';
   const head=`<div class="row noprint"><button class="btn sm" data-act="tab" data-v="records">Back</button><button class="btn sm" data-act="print">Print / save PDF</button></div><p></p>
@@ -477,27 +481,27 @@ VIEWS.record=()=>{
   if(k==='dailies'){const L=Object.fromEntries(DAILY.flatMap(s=>s.items.map(i=>[i[0],i[1]])));
     body=`<div class="card"><h3>Work today</h3><p>${esc(r.task)}</p><h3>Checklist</h3><table>${Object.entries(r.ans).map(([q,a])=>`<tr><td>${esc(L[q])}</td><td><span class="pill ${a==='y'?'ok':a==='n'?'bad':''}">${a==='y'?'Yes':a==='n'?'No':'N/A'}</span></td></tr>`).join('')}</table>
     <h3 style="margin-top:12px">Hazards and controls</h3>${Object.keys(r.hz).length?`<table><tr><th>Hazard</th><th>Controls</th><th>Before</th><th>After</th></tr>${Object.entries(r.hz).map(([h,z])=>`<tr><td>${esc((HAZARDS.find(x=>x[0]===h)||[])[1])}</td><td>${esc(z.ctrl)}</td><td>${esc(z.before)}</td><td>${esc(z.after)}</td></tr>`).join('')}</table>`:'<p class="mute">None selected.</p>'}
-    <h3 style="margin-top:12px">Notes</h3><p>${esc(r.notes||'None')}</p><h3>Signature</h3><img src="${r.sig}" alt="Signature" style="max-width:260px;background:#fff">
-    ${r.review?`<p class="okbox">Reviewed by ${esc(userName(r.review.by))} on ${fmt(r.review.at)}</p>`:isOffice()?`<p class="noprint"><button class="btn" data-act="review" data-v="${r.id}">Supervisor: mark reviewed</button></p>`:''}</div>`}
+    <h3 style="margin-top:12px">Notes</h3><p>${esc(r.notes||'None')}</p><h3>Signature</h3><img src="${img(r.sig)}" alt="Signature" style="max-width:260px;background:#fff">
+    ${r.review?`<p class="okbox">Reviewed by ${esc(userName(r.review.by))} on ${fmt(r.review.at)}</p>`:isOffice()?`<p class="noprint"><button class="btn" data-act="review" data-v="${esc(r.id)}">Supervisor: mark reviewed</button></p>`:''}</div>`}
   if(k==='insps'){const t=INSP[r.type];body=`<div class="card">${r.pass?'<p class="okbox"><b>PASSED</b></p>':`<p class="warnbox"><b>FAILED, out of service</b><br>${r.fails.map(esc).join('<br>')}</p>`}
     <dl class="kv">${t.fields.map(([f,l])=>`<dt>${esc(l)}</dt><dd>${esc(f.length&&r.f[f]?r.f[f]:'')}</dd>`).join('')}</dl>
     <h3 style="margin-top:12px">Checks</h3><table>${t.items.map((it,i)=>`<tr><td>${esc(it.split('|')[0])}<div class="small mute">${esc(it.split('|')[1])}</div></td><td><span class="pill ${r.ans['c'+i]==='y'?'ok':r.ans['c'+i]==='n'?'bad':''}">${{y:'Pass',n:'Fail',na:'N/A'}[r.ans['c'+i]]}</span></td></tr>`).join('')}</table>
-    <h3 style="margin-top:12px">Photos</h3><div class="photos">${r.photos.map((p,i)=>`<div class="ph done"><img src="${p}" alt="${esc(t.photos[i])}"></div>`).join('')}</div><p>${esc(r.notes||'')}</p></div>`}
+    <h3 style="margin-top:12px">Photos</h3><div class="photos">${r.photos.map((p,i)=>`<div class="ph done"><img src="${img(p)}" alt="${esc(t.photos[i])}"></div>`).join('')}</div><p>${esc(r.notes||'')}</p></div>`}
   if(k==='talks')body=`<div class="card"><p class="small mute">Led by ${esc(r.leader)}</p><ol>${r.points.map(p=>`<li>${esc(p)}</li>`).join('')}</ol><h3>Notes</h3><p>${esc(r.notes||'None')}</p>
-    <h3>Attendance (${r.att.length})</h3><table><tr><th>Name</th><th>Company</th><th>Signature</th></tr>${r.att.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.company)}</td><td><img src="${a.sig}" alt="" style="width:120px;background:#fff"></td></tr>`).join('')}</table></div>`;
+    <h3>Attendance (${r.att.length})</h3><table><tr><th>Name</th><th>Company</th><th>Signature</th></tr>${r.att.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.company)}</td><td><img src="${img(a.sig)}" alt="" style="width:120px;background:#fff"></td></tr>`).join('')}</table></div>`;
   if(k==='checkins')body=`<div class="card"><dl class="kv"><dt>Arrived</dt><dd>${fmt(r.inAt)}</dd><dt>Left</dt><dd>${fmt(r.outAt)||'Still on site'}</dd><dt>Distance</dt><dd>${r.dist!=null?r.dist+' m from site pin':'Site has no pin'}</dd><dt>Flag</dt><dd>${esc(r.reason||'None')}</dd><dt>Location logs</dt><dd>${(r.pings||[]).length}</dd></dl></div>`;
   if(k==='incidents')body=incBody(r);
-  if(k==='policysigs')body=`<div class="card"><p>${esc(POLICY_AGREE)}</p><dl class="kv"><dt>Name</dt><dd>${esc(r.name)}</dd><dt>Role</dt><dd>${esc(r.role||'Employee')}</dd>${r.org?`<dt>School / company</dt><dd>${esc(r.org)}</dd>`:''}${r.email?`<dt>Email</dt><dd>${esc(r.email)}</dd>`:''}${r.phone?`<dt>Phone</dt><dd>${esc(r.phone)}</dd>`:''}<dt>Policy version</dt><dd>${esc(r.version)}</dd><dt>Signed</dt><dd>${fmt(r.at)}</dd></dl><h3>Signature</h3><img src="${r.sig}" alt="Signature" style="max-width:280px;background:#fff">${r.minor?`<h3>Parent / guardian</h3><p>${esc(r.gName)}</p><img src="${r.gSig}" alt="Guardian signature" style="max-width:280px;background:#fff">`:''}<p class="small mute">Policy issued by ${esc(POLICY_SIGNER)}</p></div>`;
+  if(k==='policysigs')body=`<div class="card"><p>${esc(POLICY_AGREE)}</p><dl class="kv"><dt>Name</dt><dd>${esc(r.name)}</dd><dt>Role</dt><dd>${esc(r.role||'Employee')}</dd>${r.org?`<dt>School / company</dt><dd>${esc(r.org)}</dd>`:''}${r.email?`<dt>Email</dt><dd>${esc(r.email)}</dd>`:''}${r.phone?`<dt>Phone</dt><dd>${esc(r.phone)}</dd>`:''}<dt>Policy version</dt><dd>${esc(r.version)}</dd><dt>Signed</dt><dd>${fmt(r.at)}</dd></dl><h3>Signature</h3><img src="${img(r.sig)}" alt="Signature" style="max-width:280px;background:#fff">${r.minor?`<h3>Parent / guardian</h3><p>${esc(r.gName)}</p><img src="${img(r.gSig)}" alt="Guardian signature" style="max-width:280px;background:#fff">`:''}<p class="small mute">Policy issued by ${esc(POLICY_SIGNER)}</p></div>`;
   return head+body};
 function incBody(r){
   const t=new Date(r.when||r.at);const dl=h=>new Date(t.getTime()+h*36e5);
   const deadlines={critical:[['Phone Ministry (1-877-202-0008)',0],['Written report to Ministry, JHSC/rep, union',48],['WSIB Form 7',72]],medical:[['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],lost:[['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],shock:[['Medical assessment',0],['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],property:[['Check if s.53 notice is needed (2 days)',48]]}[r.type]||[];
   return `<div class="card"><dl class="kv"><dt>Happened</dt><dd>${fmt(r.when)}</dd><dt>Injured</dt><dd>${esc(r.injured||'None')}</dd><dt>Injury</dt><dd>${esc(r.body||'')}</dd><dt>First aid</dt><dd>${esc(r.firstaid||'')}</dd><dt>Witnesses</dt><dd>${esc(r.witness||'')}</dd></dl>
   <h3 style="margin-top:12px">What happened</h3><p>${esc(r.desc)}</p><h3>Made safe by</h3><p>${esc(r.immediate||'')}</p><h3>Reporter's view of cause</h3><p>${esc(r.cause||'')}</p>
-  ${r.photos.filter(Boolean).length?`<div class="photos">${r.photos.filter(Boolean).map(p=>`<div class="ph done"><img src="${p}" alt=""></div>`).join('')}</div>`:''}</div><p></p>
-  ${deadlines.length?`<div class="card"><h3>Reporting deadlines</h3>${deadlines.map(([l,h],i)=>{const done=r.steps[i];const due=h?dl(h*(h===72?1:1)):t;return `<div class="chk"><div>${esc(l)}<div class="ref">${h===72?'Due within 3 business days':h===0?'Right away':'Due '+fmt(due.toISOString())}</div></div>${done?`<span class="pill ok">Done ${fmt(done.at)}</span>`:isOffice()?`<button class="btn sm" data-act="incStep" data-k="${r.id}" data-v="${i}">Mark done</button>`:'<span class="pill warn">Office</span>'}</div>`}).join('')}</div><p></p>`:''}
+  ${(r.photos||[]).filter(Boolean).length?`<div class="photos">${(r.photos||[]).filter(Boolean).map(p=>`<div class="ph done"><img src="${img(p)}" alt=""></div>`).join('')}</div>`:''}</div><p></p>
+  ${deadlines.length?`<div class="card"><h3>Reporting deadlines</h3>${deadlines.map(([l,h],i)=>{const done=r.steps[i];const due=h?dl(h*(h===72?1:1)):t;return `<div class="chk"><div>${esc(l)}<div class="ref">${h===72?'Due within 3 business days':h===0?'Right away':'Due '+fmt(due.toISOString())}</div></div>${done?`<span class="pill ok">Done ${fmt(done.at)}</span>`:isOffice()?`<button class="btn sm" data-act="incStep" data-k="${esc(r.id)}" data-v="${i}">Mark done</button>`:'<span class="pill warn">Office</span>'}</div>`}).join('')}</div><p></p>`:''}
   <div class="card"><h3>Investigation (COR element 10)</h3>${r.investigation?`<dl class="kv"><dt>Root cause</dt><dd>${esc(r.investigation.root)}</dd><dt>Corrective action</dt><dd>${esc(r.investigation.fix)}</dd><dt>By</dt><dd>${esc(userName(r.investigation.by))}, ${fmt(r.investigation.at)}</dd></dl>`
-  :isOffice()?`<div class="noprint"><label class="f" for="iv-root">Root cause (ask "why" until you reach the system cause)</label><textarea id="iv-root"></textarea><label class="f" for="iv-fix">Corrective and preventive action</label><textarea id="iv-fix"></textarea><label class="f" for="iv-due">Action due date</label><input id="iv-due" type="date" value="${addDays(14)}"><p></p><button class="btn pri" data-act="investigate" data-v="${r.id}">Save investigation</button></div>`:'<p class="mute">The office will investigate.</p>'}</div>`}
+  :isOffice()?`<div class="noprint"><label class="f" for="iv-root">Root cause (ask "why" until you reach the system cause)</label><textarea id="iv-root"></textarea><label class="f" for="iv-fix">Corrective and preventive action</label><textarea id="iv-fix"></textarea><label class="f" for="iv-due">Action due date</label><input id="iv-due" type="date" value="${addDays(14)}"><p></p><button class="btn pri" data-act="investigate" data-v="${esc(r.id)}">Save investigation</button></div>`:'<p class="mute">The office will investigate.</p>'}</div>`}
 
 /* ================= TRAINING ================= */
 const courseName=c=>(COURSES.find(x=>x[0]===c)||[0,c])[1];
@@ -505,7 +509,7 @@ VIEWS.training=()=>{
   const people=isOffice()?S.users.filter(u=>u.active!==false):[ME];
   return `<h1>Training records</h1><p>Keep a record and certificate photo for each course. Working at Heights training must be renewed every 3 years (O. Reg. 297/13). COR element 8.1.</p>
   <button class="btn pri" data-act="addTr">Add training record</button><p></p>
-  ${people.map(u=>{const tr=S.training.filter(t=>t.userId===u.id);return `<div class="card"><h3><a href="#" data-act="go" data-v="profile" data-k="${u.id}">${esc(u.name)}</a></h3>${tr.length?`<div class="list">${tr.map(t=>{const d=t.expiry?-daysSince(t.expiry):null;return `<div class="it">${(t.files&&t.files[0]&&t.files[0].type.startsWith('image'))||t.photo?`<img src="${t.files?.[0]?.data||t.photo}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">`:''}<div class="m"><b>${esc(t.course==='other'&&t.label?t.label:courseName(t.course))}</b><div class="small mute">Completed ${fmtD(t.date)}${t.expiry?' • expires '+fmtD(t.expiry):''}</div></div>${d==null?'<span class="pill ok">No expiry</span>':d<0?'<span class="pill bad">Expired</span>':d<=45?'<span class="pill warn">'+d+' days</span>':'<span class="pill ok">Current</span>'}</div>`}).join('')}</div>`:'<p class="mute">No records yet.</p>'}
+  ${people.map(u=>{const tr=S.training.filter(t=>t.userId===u.id);return `<div class="card"><h3><a href="#" data-act="go" data-v="profile" data-k="${esc(u.id)}">${esc(u.name)}</a></h3>${tr.length?`<div class="list">${tr.map(t=>{const d=t.expiry?-daysSince(t.expiry):null;return `<div class="it">${(t.files&&t.files[0]&&t.files[0].type.startsWith('image'))||t.photo?`<img src="${img(t.files?.[0]?.data||t.photo)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">`:''}<div class="m"><b>${esc(t.course==='other'&&t.label?t.label:courseName(t.course))}</b><div class="small mute">Completed ${fmtD(t.date)}${t.expiry?' • expires '+fmtD(t.expiry):''}</div></div>${d==null?'<span class="pill ok">No expiry</span>':d<0?'<span class="pill bad">Expired</span>':d<=45?'<span class="pill warn">'+dayWord(d)+'</span>':'<span class="pill ok">Current</span>'}</div>`}).join('')}</div>`:'<p class="mute">No records yet.</p>'}
   ${['wah','awareness','orient','whmis'].filter(c=>!tr.some(t=>t.course===c)).length?`<p class="small warnbox">Missing: ${['wah','awareness','orient','whmis'].filter(c=>!tr.some(t=>t.course===c)).map(courseName).join(', ')}</p>`:''}</div><p></p>`}).join('')}`};
 VIEWS.profile=()=>{
   const id=V.p.id||ME.id;const u=S.users.find(x=>x.id===id);if(!u)return '<p>Profile not found.</p>';
@@ -515,18 +519,18 @@ VIEWS.profile=()=>{
   const need=['wah','awareness','orient','whmis','firstaid','loto','ewp'].filter(c=>!tr.some(t=>t.course===c));
   return `<h1>${u.id===ME.id?'My profile':esc(u.name)}</h1>
   <div class="grid g2"><div class="card">
-   <div class="row"><label class="ph ${D.photo?'done':''}" id="ph-prof" style="width:120px;flex:none;border-radius:50%">${D.photo?`<img src="${D.photo}" alt="Profile photo">`:'Add profile photo'}${can?'<input type="file" accept="image/*" data-prof="1" aria-label="Profile photo">':''}</label>
+   <div class="row"><label class="ph ${D.photo?'done':''}" id="ph-prof" style="width:120px;flex:none;border-radius:50%">${D.photo?`<img src="${img(D.photo)}" alt="Profile photo">`:'Add profile photo'}${can?'<input type="file" accept="image/*" data-prof="1" aria-label="Profile photo">':''}</label>
    <div><b style="font-size:20px">${esc(u.name)}</b><div class="small mute">${esc(u.trade||'')} • ${esc(u.role)}</div>${u.hired?`<div class="small mute">Hired ${fmtD(u.hired)}</div>`:''}</div></div>
    ${[['name','Full name','text'],['address','Home address','text'],['phone','Cell phone','tel'],['email','Email','email'],['hired','Date hired','date'],['emerg','Emergency contact (name and phone)','text']].map(([k,l,ty])=>`<label class="f" for="p-${k}">${l}</label><input id="p-${k}" type="${ty}" data-bind="${k}" value="${esc(D[k]||'')}" ${can&&!(k==='email')?'':'readonly'}>`).join('')}
    <label class="f" for="p-title">Job title</label><select id="p-title" data-bind="title" ${isAdmin()||u.id===ME.id?'':'disabled'}>${JOBS.map(j=>`<option ${D.title===j?'selected':''}>${j}</option>`).join('')}</select>
    ${can?'<p></p><button class="btn pri block" data-act="saveProfile">Save profile</button>':''}
    <p class="small mute">Your address and phone are only seen by the office.</p></div>
   <div class="card"><h2>Certificates and documents</h2><p class="small mute">Attach a photo or PDF of every ticket and card: working at heights, lift licence, first aid, lockout, WHMIS, WSIB papers and anything else.</p>
-   ${can?`<button class="btn pri" data-act="addTr" data-v="${u.id}">Attach a certificate or document</button>`:''}
+   ${can?`<button class="btn pri" data-act="addTr" data-v="${esc(u.id)}">Attach a certificate or document</button>`:''}
    ${need.length?`<p class="warnbox small">Not on file yet: ${need.map(courseName).join(', ')}</p>`:''}
-   <div class="list">${tr.map(t=>{const d=t.expiry?-daysSince(t.expiry):null;const files=t.files||(t.photo?[{name:'certificate.jpg',type:'image/jpeg',data:t.photo}]:[]);return `<div class="it">${files[0]&&files[0].type.startsWith('image')?`<img src="${files[0].data}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">`:`<span class="pill">${files.length?'PDF':'No file'}</span>`}<div class="m"><b>${esc(t.course==='other'&&t.label?t.label:courseName(t.course))}</b><div class="small mute">${t.number?'No. '+esc(t.number)+' • ':''}${t.date?'Issued '+fmtD(t.date):''}${t.expiry?' • expires '+fmtD(t.expiry):''}</div>
-    <div class="row" style="margin-top:6px">${files.map((f,i)=>`<button class="btn sm" data-act="openFile" data-v="${t.id}:${i}">Open ${esc(f.name.slice(0,24))}</button>`).join('')}${can?`<button class="btn sm" data-act="delTr" data-v="${t.id}">Delete</button>`:''}</div></div>
-    ${d==null?'<span class="pill ok">On file</span>':d<0?'<span class="pill bad">Expired</span>':d<=45?'<span class="pill warn">'+d+' days</span>':'<span class="pill ok">Current</span>'}</div>`}).join('')||'<p class="mute">Nothing attached yet.</p>'}</div></div></div>`};
+   <div class="list">${tr.map(t=>{const d=t.expiry?-daysSince(t.expiry):null;const files=t.files||(t.photo?[{name:'certificate.jpg',type:'image/jpeg',data:t.photo}]:[]);return `<div class="it">${files[0]&&files[0].type.startsWith('image')?`<img src="${img(files[0].data)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">`:`<span class="pill">${files.length?'PDF':'No file'}</span>`}<div class="m"><b>${esc(t.course==='other'&&t.label?t.label:courseName(t.course))}</b><div class="small mute">${t.number?'No. '+esc(t.number)+' • ':''}${t.date?'Issued '+fmtD(t.date):''}${t.expiry?' • expires '+fmtD(t.expiry):''}</div>
+    <div class="row" style="margin-top:6px">${files.map((f,i)=>`<button class="btn sm" data-act="openFile" data-v="${t.id}:${i}">Open ${esc(f.name.slice(0,24))}</button>`).join('')}${can?`<button class="btn sm" data-act="delTr" data-v="${esc(t.id)}">Delete</button>`:''}</div></div>
+    ${d==null?'<span class="pill ok">On file</span>':d<0?'<span class="pill bad">Expired</span>':d<=45?'<span class="pill warn">'+dayWord(d)+'</span>':'<span class="pill ok">Current</span>'}</div>`}).join('')||'<p class="mute">Nothing attached yet.</p>'}</div></div></div>`};
 async function saveProfile(){
   const u=S.users.find(x=>x.id===D.id);if(!D.name.trim())return toast('Name is required.');
   Object.assign(u,{name:D.name.trim(),photo:D.photo,address:D.address.trim(),phone:D.phone.trim(),hired:D.hired,emerg:D.emerg.trim(),trade:D.title,updated:now()});
@@ -561,7 +565,7 @@ function evidence(ev){
   const E={
     policy:[],legis:[],none:[],
     rules:[['Every active worker has signed the company policy',S.users.filter(u=>u.active!==false).every(u=>S.policysigs.some(p=>p.userId===u.id))]],
-    flha:[['Daily hazard assessments in the last 30 days',since(S.dailies,30).length>0],['A daily check for every day worked on site (last 30 days)',since(S.checkins,30).every(c=>S.dailies.some(d=>d.checkinId===c.id))],['Hazards rated before and after controls',S.dailies.some(d=>Object.keys(d.hz).length)]],
+    flha:[['Daily hazard assessments in the last 30 days',since(S.dailies,30).length>0],['A daily check for every day worked on site (last 30 days)',since(S.checkins,30).every(c=>S.dailies.some(d=>d.checkinId===c.id))],['Hazards rated before and after controls',S.dailies.some(d=>Object.keys(d.hz||{}).length)]],
     controls:[['Lockout kit inspected in the last 90 days',since(S.insps,90,r=>r.type==='loto').length>0],['Rubber gloves / arc PPE inspected in the last 30 days',since(S.insps,30,r=>r.type==='gloves').length>0]],
     ppe:[['PPE checked on daily checks in the last 30 days',since(S.dailies,30).length>0]],
     equip:[['Equipment list started',S.equip.length>0],['No out-of-service item without a corrective action',S.equip.filter(q=>q.status==='out').every(q=>S.actions.some(a=>a.src==='insp'&&a.desc.includes(q.serial)))]],
@@ -584,7 +588,7 @@ VIEWS.cor=()=>{
 /* ================= ACTIONS ================= */
 VIEWS.actions=()=>{const list=S.actions.filter(a=>isOffice()||a.assignee===ME.id||a.by===ME.id).sort((a,b)=>(a.status==='closed')-(b.status==='closed')||a.at.localeCompare(b.at));
   return `<h1>Corrective actions</h1><p>Every failed check, inspection and incident creates one. Close it when fixed (COR elements 9 and 10).</p>
-  <div class="card">${list.length?`<div class="list">${list.map(a=>`<div class="it"><span class="pill ${a.status==='closed'?'ok':a.due<today()?'bad':'warn'}">${a.status==='closed'?'Closed':a.due<today()?'Overdue':'Open'}</span><div class="m"><b>${esc(a.desc)}</b><div class="small mute">${esc(siteName(a.siteId))} • due ${fmtD(a.due)}${a.assignee?' • '+esc(userName(a.assignee)):''}${a.closeNote?' • fixed: '+esc(a.closeNote):''}</div></div>${a.status!=='closed'&&isOffice()?`<button class="btn sm" data-act="closeAct" data-v="${a.id}">Close</button>`:''}</div>`).join('')}</div>`:'<p class="mute">No corrective actions.</p>'}</div>`};
+  <div class="card">${list.length?`<div class="list">${list.map(a=>`<div class="it"><span class="pill ${a.status==='closed'?'ok':a.due&&a.due<today()?'bad':'warn'}">${a.status==='closed'?'Closed':a.due&&a.due<today()?'Overdue':'Open'}</span><div class="m"><b>${esc(a.desc)}</b><div class="small mute">${esc(siteName(a.siteId))} • due ${fmtD(a.due)}${a.assignee?' • '+esc(userName(a.assignee)):''}${a.closeNote?' • fixed: '+esc(a.closeNote):''}</div></div>${a.status!=='closed'&&isOffice()?`<button class="btn sm" data-act="closeAct" data-v="${esc(a.id)}">Close</button>`:''}</div>`).join('')}</div>`:'<p class="mute">No corrective actions.</p>'}</div>`};
 
 /* ================= EMERGENCY ================= */
 VIEWS.emerg=()=>{const ci=activeCheckin();const list=ci?S.sites.filter(s=>s.id===ci.siteId):S.sites;
@@ -653,7 +657,7 @@ VIEWS.policyadmin=()=>{
    <p class="small" style="overflow-wrap:anywhere">${esc(LIVE_URL)}#sign-policy</p>
    <button class="btn sm" data-act="copyLink">Copy link</button></div>
   <div class="card"><h2>Not signed yet (${missing.length})</h2>${missing.length?`<div class="list">${missing.map(u=>`<div class="it"><div class="m"><b>${esc(u.name)}</b><div class="small mute">${esc(u.trade||'')}</div></div><span class="pill bad">Not signed</span></div>`).join('')}</div>`:'<p class="okbox">Everyone with an account has signed this version.</p>'}</div></div><p></p>
-  <div class="card"><h2>Signed (${sigs.length})</h2>${sigs.length?`<div class="list">${sigs.map(p=>`<div class="it" data-act="openRec" data-k="policysigs" data-v="${p.id}"><img src="${p.sig}" alt="" style="width:90px;height:40px;object-fit:contain;background:#fff;border-radius:6px"><div class="m"><b>${esc(p.name)}</b><div class="small mute">${esc(p.role||'')}${p.org?' • '+esc(p.org):''} • ${fmt(p.at)}${p.minor?' • under 18, guardian signed':''}</div></div><span class="pill ${p.guest?'warn':'ok'}">${p.guest?'QR':'App'}</span></div>`).join('')}</div>`:'<p class="mute">No signatures yet.</p>'}</div>`};
+  <div class="card"><h2>Signed (${sigs.length})</h2>${sigs.length?`<div class="list">${sigs.map(p=>`<div class="it" data-act="openRec" data-k="policysigs" data-v="${esc(p.id)}"><img src="${img(p.sig)}" alt="" style="width:90px;height:40px;object-fit:contain;background:#fff;border-radius:6px"><div class="m"><b>${esc(p.name)}</b><div class="small mute">${esc(p.role||'')}${p.org?' • '+esc(p.org):''} • ${fmt(p.at)}${p.minor?' • under 18, guardian signed':''}</div></div><span class="pill ${p.guest?'warn':'ok'}">${p.guest?'QR':'App'}</span></div>`).join('')}</div>`:'<p class="mute">No signatures yet.</p>'}</div>`};
 function drawQR(){const el=$('#qr');if(!el)return;
   try{const q=qrcode(0,'M');q.addData(LIVE_URL+'#sign-policy');q.make();el.innerHTML=q.createSvgTag({cellSize:6,margin:2,scalable:true});const sv=el.querySelector('svg');if(sv){sv.style.width='240px';sv.style.height='240px'}}
   catch(e){el.innerHTML='<p class="small" style="color:#111">QR code could not load. Use the link below.</p>'}}
@@ -675,16 +679,16 @@ VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   <button class="tile" data-act="signout"><b>Sign out</b><span>${esc(ME.email)}</span></button></div>`;
 VIEWS.sites=()=>`<h1>Job sites</h1><p>Set each site's location pin and emergency plan (O. Reg. 213/91 s.17; COR element 11).</p>
   <button class="btn pri" data-act="editSite" data-v="">Add a site</button><p></p>
-  ${S.sites.map(s=>`<div class="card" style="margin-bottom:10px"><div class="row"><div style="flex:1"><b>${esc(s.name)}</b><div class="small mute">${esc(s.address||'')} • ${s.lat!=null?'Pin set, '+(s.radius||300)+' m radius':'No location pin'}${s.active===false?' • closed':''}</div></div><button class="btn sm" data-act="editSite" data-v="${s.id}">Edit</button></div></div>`).join('')}`;
+  ${S.sites.map(s=>`<div class="card" style="margin-bottom:10px"><div class="row"><div style="flex:1"><b>${esc(s.name)}</b><div class="small mute">${esc(s.address||'')} • ${s.lat!=null?'Pin set, '+(s.radius||300)+' m radius':'No location pin'}${s.active===false?' • closed':''}</div></div><button class="btn sm" data-act="editSite" data-v="${esc(s.id)}">Edit</button></div></div>`).join('')}`;
 VIEWS.siteedit=()=>{const s=D;return `<h1>${s.id?'Edit site':'New site'}</h1><div class="card">
   ${[['name','Site name'],['address','Address'],['contact','Site contact / GC super and phone'],['hospital','Nearest hospital and address'],['muster','Muster point'],['firstaider','First aider(s) on site'],['kit','First aid kit location'],['ext','Fire extinguisher locations']].map(([k,l])=>`<label class="f" for="s-${k}">${l}</label><input id="s-${k}" data-bind="${k}" value="${esc(s[k]||'')}">`).join('')}
-  <label class="f" for="s-lat">Latitude</label><input id="s-lat" data-bind="lat" inputmode="decimal" value="${s.lat??''}"><label class="f" for="s-lng">Longitude</label><input id="s-lng" data-bind="lng" inputmode="decimal" value="${s.lng??''}">
+  <label class="f" for="s-lat">Latitude</label><input id="s-lat" data-bind="lat" inputmode="decimal" value="${esc(s.lat??'')}"><label class="f" for="s-lng">Longitude</label><input id="s-lng" data-bind="lng" inputmode="decimal" value="${esc(s.lng??'')}">
   <button class="btn sm" data-act="siteHere" style="margin-top:8px">Use my location now</button>
-  <label class="f" for="s-rad">On-site radius (metres)</label><input id="s-rad" data-bind="radius" inputmode="numeric" value="${s.radius||300}">
+  <label class="f" for="s-rad">On-site radius (metres)</label><input id="s-rad" data-bind="radius" inputmode="numeric" value="${+s.radius||300}">
   <label class="f" for="s-act">Status</label><select id="s-act" data-bind="activeS"><option value="1" ${s.active!==false?'selected':''}>Active</option><option value="0" ${s.active===false?'selected':''}>Closed</option></select>
   <p></p><div class="row"><button class="btn pri" data-act="saveSite">Save site</button><button class="btn" data-act="go" data-v="sites">Cancel</button></div></div>`};
 VIEWS.crew=()=>`<h1>Crew</h1><p>Each worker creates their own account on the app. Set roles here.</p><div class="card scroll"><table><tr><th>Name</th><th>Trade</th><th>Role</th><th>Status</th></tr>
-  ${S.users.map(u=>`<tr><td><a href="#" data-act="go" data-v="profile" data-k="${u.id}"><b>${esc(u.name)}</b></a><div class="small mute">${esc(u.email)} ${esc(u.phone||'')}</div></td><td>${esc(u.trade)}</td><td>${isAdmin()&&u.id!==ME.id?`<select data-act-change="role" data-v="${u.id}"><option ${u.role==='worker'?'selected':''}>worker</option><option ${u.role==='supervisor'?'selected':''}>supervisor</option><option ${u.role==='admin'?'selected':''}>admin</option></select>`:esc(u.role)}</td><td>${isAdmin()&&u.id!==ME.id?`<button class="btn sm" data-act="toggleUser" data-v="${u.id}">${u.active===false?'Turn on':'Turn off'}</button>`:'Active'}</td></tr>`).join('')}</table></div>`;
+  ${S.users.map(u=>`<tr><td><a href="#" data-act="go" data-v="profile" data-k="${esc(u.id)}"><b>${esc(u.name)}</b></a><div class="small mute">${esc(u.email)} ${esc(u.phone||'')}</div></td><td>${esc(u.trade)}</td><td>${isAdmin()&&u.id!==ME.id?`<select data-act-change="role" data-v="${esc(u.id)}"><option ${u.role==='worker'?'selected':''}>worker</option><option ${u.role==='supervisor'?'selected':''}>supervisor</option><option ${u.role==='admin'?'selected':''}>admin</option></select>`:esc(u.role)}</td><td>${isAdmin()&&u.id!==ME.id?`<button class="btn sm" data-act="toggleUser" data-v="${esc(u.id)}">${u.active===false?'Turn on':'Turn off'}</button>`:(u.active===false?'Off':'Active')}</td></tr>`).join('')}</table></div>`;
 VIEWS.equiplist=()=>`<h1>Equipment list</h1><p>Every tool, lift, ladder and harness inspected through the app (COR element 7).</p><div class="card scroll"><table><tr><th>Item</th><th>Serial</th><th>Status</th><th>Last inspection</th><th>Dates</th></tr>
   ${S.equip.map(q=>`<tr><td>${esc(INSP[q.type]?.name||q.type)}</td><td>${esc(q.serial)}</td><td><span class="pill ${q.status==='out'?'bad':'ok'}">${q.status==='out'?'Out of service':'In service'}</span></td><td>${fmt(q.lastInsp)}</td><td class="small">${['expiry','annual','tag','test','cal','card'].filter(k=>q.fields?.[k]).map(k=>k+': '+q.fields[k]).join('<br>')}</td></tr>`).join('')||'<tr><td colspan="5" class="mute">Nothing inspected yet.</td></tr>'}</table></div>`;
 VIEWS.exportv=()=>`<h1>Export and backup</h1><p>Download records for an IHSA auditor, the Ministry, or your files. Records must be kept at least one year after a project ends (O. Reg. 213/91 s.19).</p>
@@ -714,13 +718,13 @@ document.addEventListener('change',async e=>{
   if(a==='pickEquip'){const q=S.equip.find(x=>x.id===t.value);D.equipId=t.value||null;if(q)D.f={...(q.fields||{}),serial:q.serial};render()}
   if(a==='recsite'){recSite=t.value;render()}
   if(a==='role'){const u=S.users.find(x=>x.id===t.dataset.v);u.role=t.value;save('users');toast('Role updated.')}
-  if(t.id==='imp'){const f=t.files[0];if(!f)return;try{const j=JSON.parse(await f.text());if(!j.users)throw 0;if(!await ask('Restore backup?','This replaces all records on this device with the backup.','Restore',true))return;for(const k of KEYS)if(j[k]!==undefined){S[k]=j[k];save(k)}toast('Backup restored.');render()}catch(err){toast('That file is not a Site Safety backup.')}}
+  if(t.id==='imp'){const f=t.files[0];if(!f)return;try{const j=JSON.parse(await f.text());if(!Array.isArray(j.users)||!j.users.length)throw 0;for(const k of KEYS)if(j[k]!==undefined&&k!=='cordocs'&&k!=='meta'&&!Array.isArray(j[k]))throw 0;if(!await ask('Restore backup?','This replaces all records on this device with the backup.','Restore',true))return;for(const k of KEYS)if(j[k]!==undefined){S[k]=j[k];save(k)}ME=S.users.find(u=>u.id===ME.id&&u.active!==false)||null;if(!ME){try{localStorage.removeItem(SESSION_KEY)}catch(e){}}toast('Backup restored.');t.value='';render()}catch(err){toast('That file is not a Site Safety backup.')}}
 });
 document.addEventListener('change',e=>{if(e.target.id==='pol-minor'){D.minor=e.target.checked;const g=$('#pol-g');if(g){g.style.display=D.minor?'':'none';const c=g.querySelector('canvas');if(D.minor&&c)PADS.gsig=sigPad(c,d=>{D.gsig=d})}}if(e.target.id==='pol-read')D.read=e.target.checked});
 window.addEventListener('hashchange',()=>{if(!ME)render()});
 document.addEventListener('submit',e=>{if(e.target.id==='authf')authSubmit(e)});
 const ACT={
-  tab:t=>{D={};go(t.dataset.v)},
+  tab:async t=>{if(['daily','insp','inc'].includes(D.kind)||D.topicId){const dirty=JSON.stringify(D).length>120;if(dirty&&!await ask('Leave this form?','What you have filled in will be lost.','Leave form',true))return}D={};go(t.dataset.v)},
   go:t=>{if(!['daily','incident','siteedit'].includes(t.dataset.v))D={};go(t.dataset.v,t.dataset.k?{id:t.dataset.k}:{})},
   authmode:(t,e)=>{e.preventDefault();authMode=authMode==='up'?'in':'up';render()},
   forgot:async()=>{const em=($('#a-email')?.value||'').trim();if(!em)return toast('Type your email first, then tap Forgot password.');try{await CLOUD.init();await CLOUD.reset(em);toast('Password reset email sent to '+em)}catch(e){toast('Could not send the reset email.')}},
@@ -746,35 +750,36 @@ const ACT={
   print:()=>{try{window.print()}catch(e){toast('Printing is blocked here. Open the app in your browser.')}},
   review:t=>{const r=S.dailies.find(x=>x.id===t.dataset.v);r.review={by:ME.id,at:now()};save('dailies');render()},
   incStep:t=>{const r=S.incidents.find(x=>x.id===t.dataset.k);r.steps[t.dataset.v]={at:now(),by:ME.id};save('incidents');render()},
-  investigate:t=>{const r=S.incidents.find(x=>x.id===t.dataset.v);const root=$('#iv-root').value.trim(),fix=$('#iv-fix').value.trim();if(!root||!fix)return toast('Fill in the root cause and the corrective action.');r.investigation={root,fix,by:ME.id,at:now()};save('incidents');S.actions.push({id:uid(),desc:'Incident fix: '+fix,siteId:r.siteId,src:'inc',ref:r.id,at:now(),by:ME.id,due:$('#iv-due').value,status:'open'});save('actions');toast('Investigation saved.');render()},
+  investigate:t=>{const r=S.incidents.find(x=>x.id===t.dataset.v);const root=$('#iv-root').value.trim(),fix=$('#iv-fix').value.trim();if(!root||!fix)return toast('Fill in the root cause and the corrective action.');if(!$('#iv-due').value)return toast('Set a due date for the action.');r.investigation={root,fix,by:ME.id,at:now()};save('incidents');S.actions.push({id:uid(),desc:'Incident fix: '+fix,siteId:r.siteId,src:'inc',ref:r.id,at:now(),by:ME.id,due:$('#iv-due').value,status:'open'});save('actions');toast('Investigation saved.');render()},
   addTr:t=>addTraining(t.dataset.v),
   saveProfile,
   openFile:t=>openFile(t.dataset.v),
-  delTr:async t=>{if(!await ask('Delete this document?','It will be removed from the profile.','Delete',true))return;S.training=S.training.filter(x=>x.id!==t.dataset.v);save('training');render()},
+  delTr:async t=>{if(!await ask('Delete this document?','It will be removed from the profile.','Delete',true))return;S.training=S.training.filter(x=>x.id!==t.dataset.v);saveLocal('training');CLOUD.remove('training',t.dataset.v);render()},
   cordoc:t=>{const n=t.dataset.k,i=t.dataset.v;S.cordocs[n]=S.cordocs[n]||{};if(S.cordocs[n][i])delete S.cordocs[n][i];else S.cordocs[n][i]={d:today(),by:ME.id};save('cordocs');const open=[...document.querySelectorAll('details')].map(d=>d.open);render();document.querySelectorAll('details').forEach((d,j)=>d.open=open[j])},
   closeAct:async t=>{const a=S.actions.find(x=>x.id===t.dataset.v);const m=document.createElement('div');m.className='modal';m.innerHTML=`<div class="card"><h3>Close corrective action</h3><p>${esc(a.desc)}</p><label class="f" for="ca-n">What was done to fix it?</label><textarea id="ca-n"></textarea><div class="row" style="margin-top:10px"><button class="btn pri" id="ca-ok">Close action</button><button class="btn" id="ca-x">Cancel</button></div></div>`;document.body.appendChild(m);m.querySelector('#ca-x').onclick=()=>m.remove();m.querySelector('#ca-ok').onclick=()=>{const n=m.querySelector('#ca-n').value.trim();if(!n)return toast('Say what was done.');a.status='closed';a.closeNote=n;a.closedAt=now();a.closedBy=ME.id;if(a.src==='insp'){const r=S.insps.find(x=>x.id===a.ref);const q=r&&S.equip.find(x=>x.id===r.equipId);if(q&&q.status==='out')toast('Re-inspect the equipment before putting it back in service.')}save('actions');m.remove();render()}},
   soccat:t=>{socCat=t.dataset.v;render()},
-  editSite:t=>{const s=S.sites.find(x=>x.id===t.dataset.v);D=s?{...s}:{radius:300};go('siteedit')},
+  editSite:t=>{const s=S.sites.find(x=>x.id===t.dataset.v);D=s?{...s,activeS:s.active===false?'0':'1'}:{radius:300};go('siteedit')},
   siteHere:async()=>{try{const l=await getLoc();D.lat=l.lat;D.lng=l.lng;$('#s-lat').value=l.lat;$('#s-lng').value=l.lng;toast('Location set (±'+l.acc+' m).')}catch(m){toast(m)}},
   saveSite:()=>{if(!D.name?.trim())return toast('Give the site a name.');const lat=D.lat===''||D.lat==null?null:+D.lat,lng=D.lng===''||D.lng==null?null:+D.lng;if((lat!=null&&isNaN(lat))||(lng!=null&&isNaN(lng)))return toast('Latitude and longitude must be numbers.');const s={...D,lat,lng,radius:+D.radius||300,active:D.activeS!=='0'};delete s.activeS;if(!s.id){s.id=uid();S.sites.push(s)}else Object.assign(S.sites.find(x=>x.id===s.id),s);save('sites');D={};toast('Site saved.');go('sites')},
   toggleUser:t=>{const u=S.users.find(x=>x.id===t.dataset.v);u.active=u.active===false;save('users');render()},
   exp:t=>exportData(t.dataset.v),
   signout:async()=>{if(!await ask('Sign out?',CLOUD.on?'You will need your email and password to sign back in.':'You will need your email and PIN to sign back in.','Sign out'))return;ME=null;try{localStorage.removeItem(SESSION_KEY)}catch(e){}CLOUD.signOut();D={};render()}
 };
-document.addEventListener('click',e=>{const t=e.target.closest('[data-act]');if(!t||!ACT[t.dataset.act])return;if(t.tagName==='A')e.preventDefault();ACT[t.dataset.act](t,e)});
+let BUSY=false;const SAVES=['saveDaily','saveInsp','saveTalk','saveInc','signPolicy','doCheckin','checkout','saveProfile','investigate'];
+document.addEventListener('click',async e=>{const t=e.target.closest('[data-act]');if(!t||!ACT[t.dataset.act])return;if(t.tagName==='A')e.preventDefault();const a=t.dataset.act;if(SAVES.includes(a)){if(BUSY)return;BUSY=true;try{await ACT[a](t,e)}finally{BUSY=false}}else ACT[a](t,e)});
 
 function exportData(kind){
   let blob,name;
   if(kind==='json'){blob=new Blob([JSON.stringify(Object.fromEntries(KEYS.map(k=>[k,S[k]])))],{type:'application/json'});name=`20vision-site-safety-backup-${today()}.json`}
   else{const rows=S[kind].map(r=>({date:fmt(r.at||r.inAt),worker:userName(r.userId),site:siteName(r.siteId),gps:locStamp(r.loc),title:recTitle(kind,r),result:recPill(kind,r)[1],details:kind==='insps'?r.fails.join('; '):kind==='talks'?r.att.map(a=>a.name).join('; '):kind==='incidents'?r.desc:kind==='dailies'?r.task:''}));
-    const cols=['date','worker','site','gps','title','result','details'];const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
-    blob=new Blob([[cols.join(','),...rows.map(r=>cols.map(c=>q(r[c])).join(','))].join('\n')],{type:'text/csv'});name=`20vision-${kind}-${today()}.csv`}
+    const cols=['date','worker','site','gps','title','result','details'];const q=v=>{let x=String(v??'');if(/^[=+\-@]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"'};
+    blob=new Blob(['\ufeff'+[cols.join(','),...rows.map(r=>cols.map(c=>q(r[c])).join(','))].join('\n')],{type:'text/csv'});name=`20vision-${kind}-${today()}.csv`}
   try{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();toast('Downloaded '+name)}catch(e){toast('Downloads are blocked here. Open the app in your browser.')}
 }
 
 /* ================= start ================= */
 (async()=>{
-  db=await idb();
+  db=await idb();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
   for(const k of KEYS){const v=await get(k);if(v!==undefined)S[k]=v}
   if(!db)toast('This browser cannot save records. Open the app in Chrome.');
   if(CLOUD.on){$('#app').innerHTML='<p style="text-align:center;margin-top:30vh">Loading…</p>';

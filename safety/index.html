@@ -38,7 +38,7 @@ main{max-width:1100px;margin:0 auto;padding:18px max(4vw,14px)}
 .hero{background:var(--card);border-radius:16px;border:2px solid var(--ink);overflow:hidden}
 .hero .stripe{height:14px;background:repeating-linear-gradient(-45deg,var(--or) 0 18px,#151515 18px 36px)}
 .hero .in{padding:18px}
-.stamp{display:inline-flex;gap:8px;align-items:center;border:2px dashed var(--grn);color:var(--grn);border-radius:8px;padding:4px 10px;font-weight:700;font-size:14px}
+.stamp{display:inline-flex;gap:8px;align-items:center;border:2px dashed light-dark(#137a40,var(--grn));color:light-dark(#137a40,var(--grn));border-radius:8px;padding:4px 10px;font-weight:700;font-size:14px}
 .stamp.bad{border-color:var(--red);color:var(--red)}
 .mute{color:var(--mute)}.small{font-size:14px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:10px 18px;border-radius:12px;border:2px solid var(--ink);background:var(--card);color:var(--ink);font:700 16px Barlow,sans-serif;cursor:pointer;text-decoration:none}
@@ -107,8 +107,8 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div id="app"></div>
 <div class="ticker" aria-hidden="true"><span id="tk"></span></div>
 <script src="qr.js"></script>
-<script src="data.js?v=1795378586"></script>
-<script src="app.js?v=1795378586"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
 <script>if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{})</script>
 </body>
 </html>
