@@ -147,7 +147,7 @@ const dayWord=n=>n===1?'1 day':n+' days';
 const img=v=>typeof v==='string'&&/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)?v:'';
 const addMonths=(d,m)=>{const x=new Date(d+'T12:00');x.setMonth(x.getMonth()+m);return x.toLocaleDateString('en-CA')};
 const userName=id=>(S.users.find(u=>u.id===id)||{}).name||'Unknown';
-const siteName=id=>(S.sites.find(s=>s.id===id)||{}).name||'No site';
+const siteName=id=>typeof id==='string'&&id.startsWith('u:')?'Unlisted: '+id.slice(2):(S.sites.find(s=>s.id===id)||{}).name||'No site';
 const isOffice=()=>ME&&(ME.role==='admin'||ME.role==='supervisor');
 const isAdmin=()=>ME&&ME.role==='admin';
 const mine=arr=>isOffice()?arr:arr.filter(r=>r.userId===ME.id);
@@ -295,9 +295,16 @@ VIEWS.home=()=>{
 /* ================= CHECK IN ================= */
 VIEWS.checkin=()=>{
   const sites=S.sites.filter(s=>s.active!==false);
-  if(!sites.length)return `<h1>Check in</h1><div class="infobox">No job sites yet. ${isAdmin()?'<button class="btn sm" data-act="go" data-v="sites">Add a site</button>':'Ask the office to add your job site.'}</div>`;
+  const other=`<div class="card"><h3>${sites.length?'Job not on the list?':'Check in to your job'}</h3><p class="small mute">Type the job name or address. Your GPS location is still recorded, and the office sees it as an unlisted site.</p><label class="f" for="ci-other">Job name or address</label><input id="ci-other" placeholder="e.g. 123 Main St, Brampton"><p></p><button class="btn pri" data-act="doCheckinOther">Check in here</button></div>`;
   return `<h1>Check in to a site</h1><p>Your location is recorded with every check-in, checklist, inspection and talk. This is the proof COR auditors and inspectors look for.</p>
-  <div class="card">${sites.map(s=>`<div class="chk"><div><b>${esc(s.name)}</b><div class="small mute">${esc(s.address||'')}</div></div><button class="btn pri sm" data-act="doCheckin" data-v="${esc(s.id)}">Check in here</button></div>`).join('')}</div>`};
+  ${sites.length?`<div class="card">${sites.map(s=>`<div class="chk"><div><b>${esc(s.name)}</b><div class="small mute">${esc(s.address||'')}</div></div><button class="btn pri sm" data-act="doCheckin" data-v="${esc(s.id)}">Check in here</button></div>`).join('')}</div><p></p>`:`<div class="infobox">No job sites added yet.${isAdmin()?' <button class="btn sm" data-act="go" data-v="sites">Add a site</button>':''}</div><p></p>`}${other}`};
+async function doCheckinOther(){
+  const name=($('#ci-other')?.value||'').trim().slice(0,120);if(!name)return toast('Type the job name or address.');
+  toast('Getting your location…');
+  let loc;try{loc=await getLoc()}catch(m){return tell('Location needed',esc(m),'OK')}
+  const c={id:uid(),userId:ME.id,siteId:'u:'+name,inAt:now(),loc,dist:null,far:true,reason:'Unlisted site',pings:[loc]};
+  S.checkins.push(c);save('checkins');toast('Checked in. Now do your daily safety check.');go('daily');
+}
 async function doCheckin(siteId){
   toast('Getting your location…');
   let loc;try{loc=await getLoc()}catch(m){return tell('Location needed',esc(m),'OK')}
@@ -452,7 +459,7 @@ VIEWS.incident=()=>{
   return `<h1>Report an incident</h1><div class="warnbox"><b>Emergency? Call 911 first.</b> Critical injury: protect the scene and call the office right away.</div><p></p>
   <div class="card"><h3>What happened?</h3><div class="chips">${INC_TYPES.map(t=>`<button class="chip ${D.type===t[0]?'on':''}" data-act="incType" data-v="${t[0]}">${esc(t[1])}</button>`).join('')}</div>
   <div id="increp">${repBox(D.type)}</div>
-  <label class="f" for="n-site">Site</label><select id="n-site" data-bind="siteId"><option value="">Choose</option>${S.sites.map(s=>`<option value="${s.id}" ${D.siteId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select>
+  <label class="f" for="n-site">Site</label><select id="n-site" data-bind="siteId"><option value="">Choose</option>${D.siteId&&String(D.siteId).startsWith('u:')?`<option value="${esc(D.siteId)}" selected>${esc(siteName(D.siteId))}</option>`:''}${S.sites.map(s=>`<option value="${s.id}" ${D.siteId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select>
   <label class="f" for="n-when">Date and time it happened</label><input id="n-when" type="datetime-local" data-bind="when" value="${esc(D.when)}">
   <label class="f" for="n-desc">Describe what happened</label><textarea id="n-desc" data-bind="desc">${esc(D.desc)}</textarea>
   <label class="f" for="n-inj">Injured person (if any)</label><input id="n-inj" data-bind="injured" value="${esc(D.injured)}">
@@ -760,6 +767,7 @@ const ACT={
   authmode:(t,e)=>{e.preventDefault();authMode=authMode==='up'?'in':'up';render()},
   forgot:async()=>{const em=($('#a-email')?.value||'').trim();if(!em)return toast('Type your email first, then tap Forgot password.');try{await CLOUD.init();await CLOUD.reset(em);toast('Password reset email sent to '+em)}catch(e){toast('Could not send the reset email.')}},
   doCheckin:t=>doCheckin(t.dataset.v),
+  doCheckinOther:()=>doCheckinOther(),
   checkout:async()=>{if(!await ask('Leave site?','Your location will be recorded as you leave.','Leave site'))return;const ci=activeCheckin();if(!S.dailies.some(d=>d.checkinId===ci.id)&&!await ask('Daily check not done','You have not done today\'s daily safety check. The office will see this. Leave anyway?','Leave anyway',true))return;let l=null;try{l=await getLoc()}catch(e){}ci.outAt=now();ci.noDaily=!S.dailies.some(d=>d.checkinId===ci.id);ci.outLoc=l;save('checkins');toast('Checked out. Get home safe.');go('home')},
   ans:t=>{D.ans[t.dataset.k]=t.dataset.v;t.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===t))},
   hz:t=>{const k=t.dataset.v;if(D.hz[k])delete D.hz[k];else D.hz[k]={};t.classList.toggle('on');$('#hzbox').innerHTML=hzBox()},
