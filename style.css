@@ -111,3 +111,12 @@ body.native:not(:has(.nav)) .safety{bottom:env(safe-area-inset-bottom)}
 .emobtn{min-width:48px;font-size:22px;padding:0}
 .cal div.sel{background:#d23a26;color:#fff;outline:3px solid #fff;outline-offset:-3px;box-shadow:0 0 0 2px #d23a26}.cal div.sel span{background:rgba(0,0,0,.35)}
 .cal div.td.sel{outline:3px solid #fff}
+.brief{display:flex;gap:16px;align-items:center;background:linear-gradient(135deg,#1a1a1a,#2a0f0a);border:1px solid var(--line);border-left:5px solid #d23a26;border-radius:16px;padding:16px 18px;margin-bottom:14px}
+.brief img{width:96px;border-radius:10px;flex:none}
+@media(max-width:520px){.brief{flex-direction:column;align-items:flex-start}.brief img{width:120px}}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px;text-align:left;color:inherit;cursor:pointer;display:flex;flex-direction:column;gap:4px;min-height:90px}
+.tile b{font-size:28px;line-height:1.1}.tile span{font-size:13px;color:var(--mute)}.tile:hover{border-color:#d23a26}
+.tile.warn{border-color:#d23a26;background:#2a0f0a}
+.qa{display:grid;grid-template-columns:1fr 1fr;gap:8px}.qa button{min-height:48px;width:100%}
+.tipcard{margin-top:14px;background:#f2c200;color:#111;border-radius:12px;padding:12px 14px;font-size:15px}
