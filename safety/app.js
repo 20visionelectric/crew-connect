@@ -71,6 +71,7 @@ const CLOUD = (() => {
       if (kind === 'cordocs') { if (admin) try { await fs.collection('vss_meta').doc('cordocs').set({ v: JSON.stringify(S.cordocs) }); } catch (e) { if (e.code !== 'permission-denied') retry = true; } continue; }
       sent[kind] = sent[kind] || {};
       for (const rec of S[kind]) {
+        if (tomb.has(rec.id)) continue;
         const k = h(rec); if (sent[kind][rec.id] === k) continue;
         try {
           if (denied[kind + rec.id] === k) continue;
@@ -94,6 +95,7 @@ const CLOUD = (() => {
   async function pull() {
     if (!ready || !fs) return;
     const uid = auth.currentUser.uid, cache = {};
+    await loadTomb();
     const fix = async v => {
       if (typeof v === 'string' && v.startsWith('file:')) { const id = v.slice(5); if (cache[id] === undefined) cache[id] = await getFile(id); (sent.files = sent.files || {})[id] = 1; return cache[id]; }
       if (Array.isArray(v)) return Promise.all(v.map(fix));
@@ -107,6 +109,7 @@ const CLOUD = (() => {
         const snap = await q.get();
         sent[kind] = sent[kind] || {};
         for (const d of snap.docs) {
+          if (tomb.has(d.id)) continue;
           const rec = await fix(d.data());
           const i = S[kind].findIndex(x => x.id === rec.id);
           if (i < 0) S[kind].push(rec); else S[kind][i] = kind === 'users' ? Object.assign({}, S[kind][i], rec) : rec;
@@ -119,15 +122,30 @@ const CLOUD = (() => {
         saveLocal(kind);
       } catch (e) { status = 'waiting for signal'; }
     }
+    dropTomb();
     try { const c = await fs.collection('vss_meta').doc('cordocs').get(); if (c.exists) { S.cordocs = JSON.parse(c.data().v); saveLocal('cordocs'); } } catch (e) {}
   }
   function pushAll() { KINDS.forEach(push); push('cordocs'); }
+  let tomb = new Set();
+  async function loadTomb() { try { const d = await fs.collection('vss_meta').doc('deleted').get(); if (d.exists) tomb = new Set(d.data().ids || []); } catch (e) {} return tomb; }
+  function dropTomb() { for (const kind of KINDS) { const n = S[kind].length; S[kind] = S[kind].filter(r => !tomb.has(r.id)); if (S[kind].length !== n) saveLocal(kind); } }
+  async function purge(kind, rec) {
+    tomb.add(rec.id);
+    if (!ready || !fs || !admin) return;
+    try {
+      const [, files] = strip(rec, kind);
+      for (const [id] of files) { try { const d = await fs.collection('vss_files').doc(id).get(); const n = d.exists ? (d.data().n || 1) : 1; for (let i = 0; i < n; i++) await fs.collection('vss_files').doc(i ? id + '~' + i : id).delete(); } catch (e) {} }
+      if (kind === 'users') { await fs.collection('vss_users').doc(rec.id).delete(); await fs.collection('vss_private').doc(rec.id).delete(); }
+      else await fs.collection('vss_' + kind).doc(rec.id).delete();
+      await fs.collection('vss_meta').doc('deleted').set({ ids: firebase.firestore.FieldValue.arrayUnion(rec.id) }, { merge: true });
+    } catch (e) { toast('Could not delete from the cloud right now. Try again with signal.'); }
+  }
   async function resume() { const u = await new Promise(r => { const off = auth.onAuthStateChanged(x => { off(); r(x); }); }); if (u) { await checkAdmin(u); ready = true; status = 'on'; await pull(); pushAll(); } return u; }
   async function signOut() { try { await auth?.signOut(); } catch (e) {} ready = false; status = 'signed-out'; }
   async function remove(kind, id) { if (!ready || !fs) return; try { await fs.collection('vss_' + kind).doc(id).delete(); } catch (e) {} }
   async function guestSign(rec) { if (!await init()) throw new Error('offline'); await fs.collection('vss_policysigs').doc(rec.id).set(rec); }
   const label = () => status === 'on' ? 'Saved to cloud' : 'Cloud: ' + status;
-  return { init, signIn, reset, guestSign, remove, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
+  return { purge, loadTomb, dropTomb, isDead: id => tomb.has(id), init, signIn, reset, guestSign, remove, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
 })();
 
 let ME=null;
@@ -215,7 +233,7 @@ function authView(){
    <label class="f" for="a-name">Full name</label><input id="a-name" required autocomplete="name">
    <label class="f" for="a-email">Email</label><input id="a-email" type="email" required autocomplete="email">
    <label class="f" for="a-phone">Cell phone</label><input id="a-phone" type="tel" autocomplete="tel">
-   <label class="f" for="a-trade">Job title</label><select id="a-trade">${JOBS.map(j=>`<option>${j}</option>`).join('')}</select>
+   <label class="f" for="a-trade">Job title</label><select id="a-trade" required><option value="">Choose your job title</option>${JOBS.map(j=>`<option>${j}</option>`).join('')}</select>
    ${C?`<label class="f" for="a-pin">Create a password (8 or more characters)</label><input id="a-pin" type="password" minlength="8" required autocomplete="new-password">
    <label class="f" for="a-pin2">Enter the password again</label><input id="a-pin2" type="password" minlength="8" required autocomplete="new-password">`
    :`<label class="f" for="a-pin">Create a PIN (4 to 6 digits)</label><input id="a-pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
@@ -234,6 +252,7 @@ async function authSubmit(e){
   const up=authMode==='up';
   if(up){
     if(!$('#a-name').value.trim())return toast('Enter your name.');
+    if(!$('#a-trade').value)return toast('Choose your job title.');
     if(CLOUD.on){if(pin.length<8)return toast('Password must be at least 8 characters.')}else if(!/^\d{4,6}$/.test(pin))return toast('PIN must be 4 to 6 digits.');
     if(pin!==$('#a-pin2').value)return toast(CLOUD.on?'The two passwords do not match.':'The two PINs do not match.');
   }
@@ -513,6 +532,24 @@ async function saveInc(){
   S.incidents.push(r);save('incidents');
   D={};toast('Report submitted. The office will investigate.');go('record',{k:'incidents',id:r.id})}
 
+/* ================= CLEANUP (admin) ================= */
+const OWNK=['checkins','dailies','insps','talks','incidents','training','policysigs'];
+function userRecs(uid){const out=[];for(const k of OWNK)for(const r of S[k])if(r.userId===uid)out.push([k,r]);const ids=new Set(out.map(x=>x[1].id));for(const a of S.actions)if(a.by===uid||a.assignee===uid||ids.has(a.ref))out.push(['actions',a]);return out}
+async function wipe(list){const by={};for(const [k,r] of list){(by[k]=by[k]||new Set()).add(r.id)}for(const k in by){S[k]=S[k].filter(r=>!by[k].has(r.id));saveLocal(k)}for(const [k,r] of list)await CLOUD.purge(k,r)}
+async function delRecord(k,id){if(!isAdmin())return;const r=S[k].find(x=>x.id===id);if(!r)return;
+  if(!await ask('Delete this record?','This permanently removes it from every phone and the cloud. Only delete test or mistaken records: real safety records must be kept for COR and the Ministry.','Delete for good',true))return;
+  await wipe([[k,r]]);toast('Record deleted.');go('records')}
+async function delWorker(uid,keepAccount){if(!isAdmin())return;const u=S.users.find(x=>x.id===uid);if(!u)return;if(uid===ME.id&&!keepAccount)return toast('You cannot delete your own account.');
+  const list=userRecs(uid);
+  const msg=keepAccount?`Delete all ${list.length} record(s) by ${esc(u.name)}? Their account stays.`:`Delete ${esc(u.name)} and all ${list.length} of their record(s), photos and documents?`;
+  if(!await ask(keepAccount?'Clear records?':'Delete worker?',msg+' This cannot be undone.',keepAccount?'Clear records':'Delete worker',true))return;
+  if(!keepAccount)list.push(['users',u]);
+  toast('Deleting…');await wipe(list);toast(keepAccount?'Records cleared.':'Worker deleted.');render()}
+VIEWS.cleanup=()=>{if(!isAdmin())return '<h1>Clean up test data</h1><p class="mute">Office admin only.</p>';
+  return `<h1>Clean up test data</h1><div class="warnbox">For test accounts and test entries only. Deleted records are gone from every phone and the cloud. Keep real safety records: COR and the Ministry of Labour can ask for them.</div><p></p>
+  <div class="card"><div class="list">${S.users.map(u=>{const n=userRecs(u.id).length;return `<div class="it"><div class="m"><b>${esc(u.name)}${u.id===ME.id?' (you)':''}</b><div class="small mute">${esc(u.email||'')} • ${esc(u.trade||'')} • ${n} record(s)</div></div><div class="row" style="gap:6px;flex:none">${n?`<button class="btn sm" data-act="clearRecs" data-v="${esc(u.id)}">Clear records</button>`:''}${u.id!==ME.id?`<button class="btn sm red" data-act="delWorker" data-v="${esc(u.id)}">Delete worker</button>`:''}</div></div>`}).join('')}</div></div>
+  <p class="small mute">To delete one record, open it in Records and tap Delete record.</p>`};
+
 /* ================= RECORDS ================= */
 const KIND={policysigs:['Policy sign-off','pol'],dailies:['Daily check','daily'],insps:['Inspection','insp'],talks:['Toolbox talk','talk'],incidents:['Incident','inc'],checkins:['Check-in','ci']};
 let recFilter='all',recSite='';
@@ -529,7 +566,7 @@ function recTitle(k,r){if(k==='policysigs')return 'Company policy signed by '+r.
 function recPill(k,r){if(k==='policysigs')return r.guest?['warn',r.role||'Guest']:['ok','Signed'];if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans||{}).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
 VIEWS.record=()=>{
   const {k,id}=V.p;const r=S[k].find(x=>x.id===id);if(!r)return '<p>Record not found.</p>';
-  const head=`<div class="row noprint"><button class="btn sm" data-act="tab" data-v="records">Back</button><button class="btn sm pri" data-act="pdf">Save as PDF</button>${NATIVE?'':'<button class="btn sm" data-act="print">Print</button>'}</div><p></p><div id="rec">
+  const head=`<div class="row noprint"><button class="btn sm" data-act="tab" data-v="records">Back</button><button class="btn sm pri" data-act="pdf">Save as PDF</button>${NATIVE?'':'<button class="btn sm" data-act="print">Print</button>'}${isAdmin()?`<button class="btn sm red" data-act="delRec" data-k="${k}" data-v="${esc(id)}">Delete record</button>`:''}</div><p></p><div id="rec">
   <div class="hero"><div class="stripe"></div><div class="in"><p class="small mute">20 Vision Electric Inc. • ${esc(KIND[k][0])}</p><h1>${esc(recTitle(k,r))}</h1>
   <dl class="kv"><dt>Date</dt><dd>${fmt(r.at||r.inAt)}</dd><dt>By</dt><dd>${esc(r.userId?userName(r.userId):r.name||'')}</dd><dt>Site</dt><dd>${esc(siteName(r.siteId))}</dd><dt>GPS</dt><dd>${esc(locStamp(r.loc))}${r.loc?` • <a href="https://maps.google.com/?q=${r.loc.lat},${r.loc.lng}" target="_blank" rel="noopener">map</a>`:''}</dd></dl></div></div><p></p>`;
   let body='';
@@ -746,6 +783,7 @@ VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   ${isOffice()?`<button class="tile" data-act="go" data-v="policyadmin"><b>Policy sign-offs</b><span>QR code and signatures</span></button>
   <button class="tile" data-act="go" data-v="sites"><b>Job sites</b><span>Location and emergency plan</span></button>
   <button class="tile" data-act="go" data-v="crew"><b>Crew</b><span>Accounts and roles</span></button>
+  ${isAdmin()?`<button class="tile" data-act="go" data-v="cleanup"><b>Clean up test data</b><span>Delete test workers and records</span></button>`:''}
   <button class="tile" data-act="go" data-v="equiplist"><b>Equipment list</b><span>COR element 7</span></button>
   <button class="tile" data-act="go" data-v="exportv"><b>Export / backup</b><span>For audits</span></button>`:''}
   <button class="tile" data-act="signout"><b>Sign out</b><span>${esc(ME.email)}</span></button></div>`;
@@ -804,6 +842,9 @@ const ACT={
   forgot:async()=>{const em=($('#a-email')?.value||'').trim();if(!em)return toast('Type your email first, then tap Forgot password.');try{await CLOUD.init();await CLOUD.reset(em);toast('Password reset email sent to '+em)}catch(e){toast('Could not send the reset email.')}},
   doCheckin:t=>doCheckin(t.dataset.v),
   doCheckinOther:()=>doCheckinOther(),
+  delRec:t=>delRecord(t.dataset.k,t.dataset.v),
+  delWorker:t=>delWorker(t.dataset.v,false),
+  clearRecs:t=>delWorker(t.dataset.v,true),
   bioSignIn:()=>bioSignIn(),
   checkout:async()=>{if(!await ask('Leave site?','Your location will be recorded as you leave.','Leave site'))return;const ci=activeCheckin();if(!S.dailies.some(d=>d.checkinId===ci.id)&&!await ask('Daily check not done','You have not done today\'s daily safety check. The office will see this. Leave anyway?','Leave anyway',true))return;let l=null;try{l=await getLoc()}catch(e){}ci.outAt=now();ci.noDaily=!S.dailies.some(d=>d.checkinId===ci.id);ci.outLoc=l;save('checkins');toast('Checked out. Get home safe.');go('home')},
   ans:t=>{D.ans[t.dataset.k]=t.dataset.v;t.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===t))},
