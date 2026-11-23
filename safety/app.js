@@ -149,8 +149,9 @@ const img=v=>typeof v==='string'&&/^data:image\/(png|jpeg|jpg|webp|gif);base64,[
 const addMonths=(d,m)=>{const x=new Date(d+'T12:00');x.setMonth(x.getMonth()+m);return x.toLocaleDateString('en-CA')};
 const userName=id=>(S.users.find(u=>u.id===id)||{}).name||'Unknown';
 const siteName=id=>typeof id==='string'&&id.startsWith('u:')?'Unlisted: '+id.slice(2):(S.sites.find(s=>s.id===id)||{}).name||'No site';
-const isOffice=()=>ME&&(ME.role==='admin'||ME.role==='supervisor');
+const isOffice=()=>ME&&(ME.role==='admin'||ME.role==='supervisor'||ME.role==='hr');
 const isAdmin=()=>ME&&ME.role==='admin';
+const canCor=()=>ME&&(ME.role==='admin'||ME.role==='hr');
 const mine=arr=>isOffice()?arr:arr.filter(r=>r.userId===ME.id);
 const PREVIEW=(()=>{try{return window.self!==window.top}catch(e){return true}})();
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),3200)}
@@ -305,7 +306,7 @@ VIEWS.home=()=>{
   <button class="tile hot" data-act="go" data-v="incident"><b>Report incident</b><span>Injury, near miss, hazard</span></button>
   <button class="tile" data-act="tab" data-v="talks"><b>Toolbox talk</b><span>Run a talk, sign in the crew</span></button>
   <button class="tile" data-act="go" data-v="training"><b>My training</b><span>Certificates and expiry dates</span></button>
-  <button class="tile" data-act="go" data-v="cor"><b>COR readiness</b><span>14 COR 2020 elements</span></button>
+  ${canCor()?`<button class="tile" data-act="go" data-v="cor"><b>COR readiness</b><span>14 COR 2020 elements</span></button>`:''}
   <button class="tile" data-act="go" data-v="socials"><b>Safety Socials</b><span>Do this, not that</span></button>
   <button class="tile" data-act="go" data-v="updates"><b>Safety updates</b><span>Ontario rule changes</span></button>
   <button class="tile" data-act="go" data-v="actions"><b>Corrective actions</b><span>${S.actions.filter(a=>a.status!=='closed').length} open</span></button>
@@ -634,6 +635,7 @@ function evidence(ev){
   };return E[ev]||[]}
 function corScore(e){const docs=S.cordocs[e.n]||{};const dd=e.docs.filter((_,i)=>docs[i]).length/e.docs.length;const ev=evidence(e.ev);const ee=ev.length?ev.filter(x=>x[1]).length/ev.length:dd;return Math.round((dd*.6+ee*.4)*100)}
 VIEWS.cor=()=>{
+  if(!canCor())return `<h1>COR readiness</h1><p class="mute">Only the office admin and HR can see this.</p>`;
   const tot=COR.reduce((a,e)=>a+e.pts,0),score=Math.round(COR.reduce((a,e)=>a+corScore(e)*e.pts,0)/tot);
   return `<h1>COR 2020 readiness</h1><div class="card"><div class="big">${score}%</div><div class="bar"><i style="width:${score}%"></i></div>
   <p class="small mute">An estimate to guide your work, not an IHSA score. In Ontario, COR is granted only by IHSA after IHSA training, an internal audit and an external audit. To pass, you need at least 80% overall and at least 50% in each element.</p></div><p></p>
@@ -723,7 +725,7 @@ function drawQR(){const el=$('#qr');if(!el)return;
 VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   <button class="tile" data-act="go" data-v="profile"><b>My profile</b><span>Details and documents</span></button>
   <button class="tile" data-act="go" data-v="training"><b>Training</b><span>Certificates</span></button>
-  <button class="tile" data-act="go" data-v="cor"><b>COR readiness</b><span>14 elements</span></button>
+  ${canCor()?`<button class="tile" data-act="go" data-v="cor"><b>COR readiness</b><span>14 elements</span></button>`:''}
   <button class="tile" data-act="go" data-v="actions"><b>Corrective actions</b><span>Open items</span></button>
   <button class="tile" data-act="go" data-v="emerg"><b>Emergency info</b><span>Per site</span></button>
   <button class="tile" data-act="go" data-v="socials"><b>Safety Socials</b><span>Do / Don't</span></button>
@@ -745,7 +747,7 @@ VIEWS.siteedit=()=>{const s=D;return `<h1>${s.id?'Edit site':'New site'}</h1><di
   <label class="f" for="s-act">Status</label><select id="s-act" data-bind="activeS"><option value="1" ${s.active!==false?'selected':''}>Active</option><option value="0" ${s.active===false?'selected':''}>Closed</option></select>
   <p></p><div class="row"><button class="btn pri" data-act="saveSite">Save site</button><button class="btn" data-act="go" data-v="sites">Cancel</button></div></div>`};
 VIEWS.crew=()=>`<h1>Crew</h1><p>Each worker creates their own account on the app. Set roles here.</p><div class="card scroll"><table><tr><th>Name</th><th>Trade</th><th>Role</th><th>Status</th></tr>
-  ${S.users.map(u=>`<tr><td><a href="#" data-act="go" data-v="profile" data-k="${esc(u.id)}"><b>${esc(u.name)}</b></a><div class="small mute">${esc(u.email)} ${esc(u.phone||'')}</div></td><td>${esc(u.trade)}</td><td>${isAdmin()&&u.id!==ME.id?`<select data-act-change="role" data-v="${esc(u.id)}"><option ${u.role==='worker'?'selected':''}>worker</option><option ${u.role==='supervisor'?'selected':''}>supervisor</option><option ${u.role==='admin'?'selected':''}>admin</option></select>`:esc(u.role)}</td><td>${isAdmin()&&u.id!==ME.id?`<button class="btn sm" data-act="toggleUser" data-v="${esc(u.id)}">${u.active===false?'Turn on':'Turn off'}</button>`:(u.active===false?'Off':'Active')}</td></tr>`).join('')}</table></div>`;
+  ${S.users.map(u=>`<tr><td><a href="#" data-act="go" data-v="profile" data-k="${esc(u.id)}"><b>${esc(u.name)}</b></a><div class="small mute">${esc(u.email)} ${esc(u.phone||'')}</div></td><td>${esc(u.trade)}</td><td>${isAdmin()&&u.id!==ME.id?`<select data-act-change="role" data-v="${esc(u.id)}"><option ${u.role==='worker'?'selected':''}>worker</option><option ${u.role==='supervisor'?'selected':''}>supervisor</option><option value="hr" ${u.role==='hr'?'selected':''}>HR</option><option ${u.role==='admin'?'selected':''}>admin</option></select>`:esc(u.role)}</td><td>${isAdmin()&&u.id!==ME.id?`<button class="btn sm" data-act="toggleUser" data-v="${esc(u.id)}">${u.active===false?'Turn on':'Turn off'}</button>`:(u.active===false?'Off':'Active')}</td></tr>`).join('')}</table></div>`;
 VIEWS.equiplist=()=>`<h1>Equipment list</h1><p>Every tool, lift, ladder and harness inspected through the app (COR element 7).</p><div class="card scroll"><table><tr><th>Item</th><th>Serial</th><th>Status</th><th>Last inspection</th><th>Dates</th></tr>
   ${S.equip.map(q=>`<tr><td>${esc(INSP[q.type]?.name||q.type)}</td><td>${esc(q.serial)}</td><td><span class="pill ${q.status==='out'?'bad':'ok'}">${q.status==='out'?'Out of service':'In service'}</span></td><td>${fmt(q.lastInsp)}</td><td class="small">${['expiry','annual','tag','test','cal','card'].filter(k=>q.fields?.[k]).map(k=>k+': '+q.fields[k]).join('<br>')}</td></tr>`).join('')||'<tr><td colspan="5" class="mute">Nothing inspected yet.</td></tr>'}</table></div>`;
 VIEWS.exportv=()=>`<h1>Export and backup</h1><p>Download records for an IHSA auditor, the Ministry, or your files. Records must be kept at least one year after a project ends (O. Reg. 213/91 s.19).</p>
