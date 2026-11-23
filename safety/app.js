@@ -425,7 +425,7 @@ VIEWS.inspform=()=>{
   ${known.length?`<div class="card"><label class="f" for="i-pick">Pick from equipment list (optional)</label><select id="i-pick" data-act-change="pickEquip"><option value="">New item</option>${known.map(q=>`<option value="${q.id}" ${D.equipId===q.id?'selected':''}>${esc(q.serial)}${q.status==='out'?' (OUT OF SERVICE)':''}</option>`).join('')}</select></div><p></p>`:''}
   <div class="card"><h3>Photos (all required)</h3><div class="photos">${t.photos.map((p,i)=>`<label class="ph ${D.photos[i]?'done':''}" id="ph-${i}">${D.photos[i]?`<img src="${img(D.photos[i])}" alt="">`:esc(p)}<input type="file" accept="image/*" capture="environment" data-photo="${i}" aria-label="${esc(p)}"></label>`).join('')}</div></div><p></p>
   <div class="card"><h3>Details</h3>${t.fields.map(([k,l,ty])=>`<label class="f" for="if-${k}">${esc(l)}</label><input id="if-${k}" type="${ty}" data-bind="f.${k}" value="${esc(D.f[k]||'')}">`).join('')}</div><p></p>
-  <div class="card"><h3>Checks</h3>${t.items.map((it,i)=>{const [txt,ref]=it.split('|');return chkRow('c'+i,txt,ref,D.ans)}).join('')}
+  <div class="card"><h3>Checks</h3>${t.items.map((it,i)=>chkRow('c'+i,it.split('|')[0],refOn(it),D.ans)).join('')}
   <label class="f" for="i-notes">Notes / defects found</label><textarea id="i-notes" data-bind="notes">${esc(D.notes||'')}</textarea></div><p></p>
   <button class="btn pri block" data-act="saveInsp">Save inspection</button>`};
 function dateRules(type,f){
@@ -595,7 +595,7 @@ VIEWS.record=()=>{
     ${r.review?`<p class="okbox">Reviewed by ${esc(userName(r.review.by))} on ${fmt(r.review.at)}</p>`:isOffice()?`<p class="noprint"><button class="btn" data-act="review" data-v="${esc(r.id)}">Supervisor: mark reviewed</button></p>`:''}</div>`}
   if(k==='insps'){const t=INSP[r.type];body=`<div class="card">${r.pass?'<p class="okbox"><b>PASSED</b></p>':`<p class="warnbox"><b>FAILED, out of service</b><br>${r.fails.map(esc).join('<br>')}</p>`}
     <dl class="kv">${t.fields.map(([f,l])=>`<dt>${esc(l)}</dt><dd>${esc(f.length&&r.f[f]?r.f[f]:'')}</dd>`).join('')}</dl>
-    <h3 style="margin-top:12px">Checks</h3><table>${t.items.map((it,i)=>`<tr><td>${esc(it.split('|')[0])}<div class="small mute">${esc(it.split('|')[1])}</div></td><td><span class="pill ${r.ans['c'+i]==='y'?'ok':r.ans['c'+i]==='n'?'bad':''}">${{y:'Pass',n:'Fail',na:'N/A'}[r.ans['c'+i]]}</span></td></tr>`).join('')}</table>
+    <h3 style="margin-top:12px">Checks</h3><table>${t.items.map((it,i)=>`<tr><td>${esc(it.split('|')[0])}<div class="small mute">${esc(refOn(it,r.at))}</div></td><td><span class="pill ${r.ans['c'+i]==='y'?'ok':r.ans['c'+i]==='n'?'bad':''}">${{y:'Pass',n:'Fail',na:'N/A'}[r.ans['c'+i]]}</span></td></tr>`).join('')}</table>
     <h3 style="margin-top:12px">Photos</h3><div class="photos">${r.photos.map((p,i)=>`<div class="ph done"><img src="${img(p)}" alt="${esc(t.photos[i])}"></div>`).join('')}</div><p>${esc(r.notes||'')}</p></div>`}
   if(k==='talks')body=`<div class="card"><p class="small mute">Led by ${esc(r.leader)}</p><ol>${r.points.map(p=>`<li>${esc(p)}</li>`).join('')}</ol><h3>Notes</h3><p>${esc(r.notes||'None')}</p>
     <h3>Attendance (${r.att.length})</h3><table><tr><th>Name</th><th>Company</th><th>Signature</th></tr>${r.att.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.company)}</td><td><img src="${img(a.sig)}" alt="" style="width:120px;background:#fff"></td></tr>`).join('')}</table></div>`;

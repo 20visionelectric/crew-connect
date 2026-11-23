@@ -3,6 +3,10 @@
    O. Reg. 420/21 (Notices and Reports), O. Reg. 297/13 (Awareness Training), Reg. 1101 (First Aid),
    IHSA COR 2020 Audit Tool (v2.0, Oct 2022). Wording is original; check the source text before relying on it. */
 
+/* Ontario elevating work platform rules move from O. Reg. 213/91 s.143–149 to O. Reg. 117/26 on Jan 1, 2027 */
+const EWP_DATE='2027-01-01';
+const EWP_NEW=new Date().toLocaleDateString('en-CA')>=EWP_DATE;
+const refOn=(item,iso)=>{const p=item.split('|');return p[2]&&(iso?new Date(iso).toLocaleDateString('en-CA'):new Date().toLocaleDateString('en-CA'))>=EWP_DATE?p[2]:(p[1]||'')};
 const TICKER = [
   'Always remember to wear your PPE.',
   'Safety starts with YOU!',
@@ -55,7 +59,7 @@ const HAZARDS = [
   ['loto', 'Lockout and tagging', 'Lock and tag each source, discharge stored energy, verify dead (s.190).'],
   ['heights', 'Working at heights (over 3 m, or 1.2 m+ near water, machinery or hazards)', 'Guardrails first; if not possible, travel restraint, then fall arrest with a written rescue plan (s.26, s.26.1(4)).'],
   ['ladder', 'Ladders', 'CSA Z11 Grade 1/1A/1AA, secured, three points of contact (s.80–83).'],
-  ['ewp', 'Scissor lift / boom lift', 'Daily inspection, trained operator, manual on board (s.144–149).'],
+  ['ewp', 'Scissor lift / boom lift', EWP_NEW?'Daily inspection, trained operator, manual kept with the machine (O. Reg. 117/26).':'Daily inspection, trained operator, manual on board (s.144–149).'],
   ['ohl', 'Overhead power lines', 'Keep the minimum distance (3 m up to 150 kV); signaller if equipment could encroach (s.188).'],
   ['hot', 'Hot work / soldering / cutting', 'Extinguisher on hand, combustibles cleared, fire watch.'],
   ['confined', 'Confined space', 'STOP. Do not enter without a confined space program and entry permit.'],
@@ -75,20 +79,20 @@ const INSP = {
   ewp: { name: 'Scissor lift / boom lift (EWP)', photos: ['Whole machine', 'Serial / data plate', 'Maintenance and inspection tag'],
     fields: [['serial','Serial number','text'],['unit','Unit / rental number','text'],['annual','Last annual inspection date','date'],['tag','Date on inspection tag','date']],
     items: [
-      'I am trained on this class of platform (oral, written and hands-on).|s.147',
-      'Operator\'s manual is on the platform.|s.149',
-      'Maintenance and inspection tag is attached near the controls.|s.146',
-      'Logbook of inspections, repairs and maintenance is up to date.|s.145',
-      'Rated load decal visible; load today is within it.|s.148(1)(a)',
-      'Guardrails, mid-rails, toe boards and entry gate or chain are in place, and the gate closes.|s.144(7)',
+      'I am trained on this type of platform and familiar with this make and model.|s.147|O. Reg. 117/26 s.9–11',
+      'Operator\'s manual is with the platform.|s.149|O. Reg. 117/26 s.8',
+      'Maintenance and inspection tag is attached near the controls.|s.146|O. Reg. 117/26 s.6',
+      'Logbook of inspections, repairs and maintenance is up to date.|s.145|O. Reg. 117/26 s.5',
+      'Rated load decal visible; load today is within it.|s.148(1)(a)|O. Reg. 117/26 s.7(1)(a)',
+      'Guardrails, mid-rails, toe boards and entry gate or chain are in place, and the gate closes.|s.144(7)|O. Reg. 117/26 s.4(7)',
       'Ground and platform controls work, including emergency stop.|Mfr.',
       'Emergency lowering works.|Mfr.',
       'Tilt alarm, descent alarm and horn work.|Mfr.',
       'No hydraulic leaks; hoses and cylinders OK.|Mfr.',
       'Tires, wheels, pothole guards and brakes OK.|Mfr.',
       'Battery charged; charger and cables OK.|Mfr.',
-      'Surface is firm and level; overhead hazards and power lines checked.|s.148',
-      'Boom lift: harness on and tied off to the anchor point at all times.|s.148(1)(e)'
+      'Surface is firm and level; overhead hazards and power lines checked.|s.148|O. Reg. 117/26 s.7(1)(c)',
+      'Boom lift: harness on and tied off to the anchor point at all times.|s.148(1)(e)|O. Reg. 117/26 s.7(1)(e)'
     ]},
   ladder: { name: 'Ladder (step / extension)', photos: ['Whole ladder', 'CSA grade / duty label'],
     fields: [['serial','Ladder ID or serial','text'],['grade','CSA grade (1, 1A or 1AA)','text']],
@@ -235,7 +239,7 @@ const TALKS = [
     'Inspect it every day before use and record it.',
     'Only trained operators; know the emergency lowering.',
     'Keep the gate closed; never climb the guardrails.',
-    'In a boom lift, tie off to the anchor point.'], ask:['Where is the manual on this machine?'], ref:'s.143–149' },
+    'In a boom lift, tie off to the anchor point.'], ask:['Where is the manual on this machine?'], ref:EWP_NEW?'O. Reg. 117/26':'s.143–149' },
   { id:'t8', title:'Fall protection and rescue', cat:'Access', points:[
     'Over 3 m (or less near hazards): guardrails first, then travel restraint, then fall arrest.',
     'Inspect your harness and lanyard before each use.',
@@ -357,7 +361,7 @@ const COURSES = [
   ['awareness', 'Worker Health and Safety Awareness', 0],
   ['supaware', 'Supervisor Health and Safety Awareness', 0],
   ['whmis', 'WHMIS', 12],
-  ['ewp', 'Lift licence: elevating work platform / boom operator', 36],
+  ['ewp', 'Lift licence: elevating work platform / boom operator', EWP_NEW?60:36],
   ['firstaid', 'First aid / CPR / AED', 36],
   ['arcflash', 'Arc flash / CSA Z462 electrical safety', 36],
   ['loto', 'Lockout and tagging', 36],
@@ -408,7 +412,7 @@ const SOCIALS = [
 const UPDATES = [
   { date:'2026-11-22', title:'COR in Ontario is granted only by IHSA', body:'IHSA is the authority having jurisdiction for COR in Ontario. All external audits now use the COR 2020 audit tool, submitted through AuditSoft. Senior management and one full-time employee must take IHSA\'s prescribed training first.', src:'IHSA', url:'https://www.ihsa.ca/cor-home' },
   { date:'2026-11-22', title:'Incident reporting content is set by O. Reg. 420/21', body:'Critical injuries and deaths: phone the Ministry right away and send a written report within 48 hours. Injuries needing medical attention or keeping a worker from usual work: written notice within 4 days. Some construction incidents with no injury: notice within 2 days.', src:'Ontario.ca', url:'https://www.ontario.ca/page/reporting-workplace-incidents-and-illnesses' },
-  { date:'2026-11-22', title:'Elevating work platforms: daily inspection and logbook', body:'Each EWP must be inspected before use every day by a trained worker, and the owner must keep a permanent record of inspections, tests, repairs and maintenance (O. Reg. 213/91 s.144(3), s.145).', src:'O. Reg. 213/91', url:'https://www.ontario.ca/laws/regulation/910213' },
+  { date:'2026-11-22', title:'Elevating work platforms: daily inspection and logbook', body:'Each EWP must be inspected before use every day by a trained worker, and the owner must keep a permanent record of inspections, tests, repairs and maintenance '+(EWP_NEW?'(O. Reg. 117/26 s.4(3), s.5).':'(O. Reg. 213/91 s.144(3), s.145).'), src:EWP_NEW?'O. Reg. 117/26':'O. Reg. 213/91', url:EWP_NEW?'https://www.ontario.ca/laws/regulation/r26117':'https://www.ontario.ca/laws/regulation/910213' },
   { date:'2026-11-22', title:'Fire extinguishers: monthly tag', body:'A competent worker must inspect extinguishers at least once a month and record the date on the attached tag (O. Reg. 213/91 s.55).', src:'O. Reg. 213/91', url:'https://www.ontario.ca/laws/regulation/910213' },
   { date:'2026-04-20', title:'New EWP regulation replaces s.143–149 on Jan 1, 2027', body:'Starting January 1, 2027, the elevating work platform rules move out of O. Reg. 213/91 (s.143–149) into a new standalone regulation, O. Reg. 117/26. Platforms still need a daily pre-use check by a trained worker and an up-to-date signed record of inspections, repairs and maintenance. Mobile EWP operator training will be good for five years, plus familiarization on each make and model you run.', src:'Ontario e-Laws', url:'https://www.ontario.ca/laws/regulation/r26117' },
   { date:'2026-10-22', title:'WSIB average premium drops to $1.18 for 2027', body:'WSIB is cutting its average premium rate to $1.18 per $100 of insurable earnings for 2027, down from $1.23 in 2026. Your own rate depends on your rate class and risk band, so it may not drop by the same amount. Your 2027 rate statement is available now in WSIB online services.', src:'WSIB', url:'https://www.wsib.ca/en/2027premiumrates' },
