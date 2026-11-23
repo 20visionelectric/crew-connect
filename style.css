@@ -109,3 +109,5 @@ body.native:not(:has(.nav)) .safety{bottom:env(safe-area-inset-bottom)}
 .egrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(42px,1fr));gap:4px;max-height:180px;overflow:auto}.egrid button{font-size:26px;min-height:44px;background:none;border:0;cursor:pointer;border-radius:8px}.egrid button:active{background:rgba(255,255,255,.1)}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px;max-height:220px;overflow:auto}.sgrid button{background:none;border:0;padding:2px;cursor:pointer;border-radius:10px}.sgrid img{width:100%;display:block}
 .emobtn{min-width:48px;font-size:22px;padding:0}
+.cal div.sel{background:#d23a26;color:#fff;outline:3px solid #fff;outline-offset:-3px;box-shadow:0 0 0 2px #d23a26}.cal div.sel span{background:rgba(0,0,0,.35)}
+.cal div.td.sel{outline:3px solid #fff}
