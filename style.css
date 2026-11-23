@@ -98,3 +98,4 @@ body.native .top{padding-top:calc(12px + env(safe-area-inset-top))}
 body.native .nav{padding-bottom:env(safe-area-inset-bottom)}
 body.native:has(.nav) .safety{bottom:calc(62px + env(safe-area-inset-bottom))}
 body.native:not(:has(.nav)) .safety{bottom:env(safe-area-inset-bottom)}
+.pwwrap{position:relative}.pwwrap input{padding-right:52px}.pweye{position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:0;font-size:22px;min-height:44px;min-width:44px;color:inherit;cursor:pointer}
