@@ -150,7 +150,14 @@ const CLOUD = (() => {
 
 let ME=null;
 const SESSION_KEY='vss-session';
-const JOBS=['Master Electrician','Electrician (309A)','Electrician (442A)','Apprentice','Foreman / Supervisor','Labourer','Office','Other'];
+const JOBS=['Master Electrician','Electrician (309A)','Electrician (442A)','Apprentice','Foreman / Supervisor','Labourer','Co-op student','Office','Other'];
+const YEARS=['Year 1','Year 2','Year 3','Year 4','Year 5'];
+const baseJob=t=>/^Apprentice/.test(t||'')?'Apprentice':(t||'');
+const appYr=t=>((t||'').match(/Year \d/)||[''])[0];
+const mkJob=(j,y)=>j==='Apprentice'&&y?'Apprentice – '+y:j;
+const isApp=t=>/^Apprentice/.test(t||'');
+const jobOpts=cur=>{cur=baseJob(cur);return `<option value="" ${cur?'':'selected'}>Choose your job title</option>`+(cur&&!JOBS.includes(cur)?[cur]:[]).concat(JOBS).map(j=>`<option ${cur===j?'selected':''}>${esc(j)}</option>`).join('')};
+const yrOpts=cur=>`<option value="">Choose your apprentice year</option>`+YEARS.map(y=>`<option ${cur===y?'selected':''}>${y}</option>`).join('');
 
 /* ================= helpers ================= */
 const $=s=>document.querySelector(s);
@@ -233,7 +240,8 @@ function authView(){
    <label class="f" for="a-name">Full name</label><input id="a-name" required autocomplete="name">
    <label class="f" for="a-email">Email</label><input id="a-email" type="email" required autocomplete="email">
    <label class="f" for="a-phone">Cell phone</label><input id="a-phone" type="tel" autocomplete="tel">
-   <label class="f" for="a-trade">Job title</label><select id="a-trade" required><option value="">Choose your job title</option>${JOBS.map(j=>`<option>${j}</option>`).join('')}</select>
+   <label class="f" for="a-trade">Job title</label><select id="a-trade" required>${jobOpts('')}</select>
+   <div id="a-sto-w" style="display:none"><label class="f" for="a-yr">Apprentice year</label><select id="a-yr">${yrOpts('')}</select><label class="f" for="a-sto">Skilled Trades Ontario (STO) apprentice number</label><input id="a-sto" inputmode="numeric" autocomplete="off" placeholder="From your STO registration"><p class="small mute">Proves you are a registered apprentice. Find it on your Skilled Trades Ontario training agreement or online account.</p></div>
    ${C?`<label class="f" for="a-pin">Create a password (8 or more characters)</label><input id="a-pin" type="password" minlength="8" required autocomplete="new-password">
    <label class="f" for="a-pin2">Enter the password again</label><input id="a-pin2" type="password" minlength="8" required autocomplete="new-password">`
    :`<label class="f" for="a-pin">Create a PIN (4 to 6 digits)</label><input id="a-pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
@@ -253,6 +261,8 @@ async function authSubmit(e){
   if(up){
     if(!$('#a-name').value.trim())return toast('Enter your name.');
     if(!$('#a-trade').value)return toast('Choose your job title.');
+    if(isApp($('#a-trade').value)&&!$('#a-yr').value)return toast('Choose your apprentice year.');
+    if(isApp($('#a-trade').value)&&!$('#a-sto').value.trim())return toast('Enter your Skilled Trades Ontario (STO) apprentice number.');
     if(CLOUD.on){if(pin.length<8)return toast('Password must be at least 8 characters.')}else if(!/^\d{4,6}$/.test(pin))return toast('PIN must be 4 to 6 digits.');
     if(pin!==$('#a-pin2').value)return toast(CLOUD.on?'The two passwords do not match.':'The two PINs do not match.');
   }
@@ -265,7 +275,7 @@ async function authSubmit(e){
     await CLOUD.pull();
     let u=S.users.find(x=>x.id===fu.uid);
     if(!u){const cc=await CLOUD.crewName(fu.uid);
-      u={id:fu.uid,name:up?$('#a-name').value.trim():(cc?.name||email.split('@')[0]),email,phone:up?$('#a-phone').value.trim():(cc?.phone||''),trade:up?$('#a-trade').value:'Electrician (309A)',role:'worker',created:now(),active:true};
+      u={id:fu.uid,name:up?$('#a-name').value.trim():(cc?.name||email.split('@')[0]),email,phone:up?$('#a-phone').value.trim():(cc?.phone||''),trade:up?mkJob($('#a-trade').value,$('#a-yr').value):'',sto:up?($('#a-sto')?.value||'').trim():'',role:'worker',created:now(),active:true};
       S.users.push(u)}
     if(u.active===false){await CLOUD.signOut();btn.disabled=false;return toast('This account is turned off. Ask the office.')}
     if(CLOUD.admin&&u.role!=='admin')u.role='admin';
@@ -273,12 +283,13 @@ async function authSubmit(e){
     try{localStorage.setItem(SESSION_KEY,ME.id)}catch(e){}
     await rememberLogin(email,pin,up);
     if(up){toast('Account created. Check your email to confirm it. Now finish your profile.');return go('profile',{id:u.id})}
+    if(!u.trade){toast('Welcome. Choose your job title and finish your profile.');return go('profile',{id:u.id})}
     if(!u.photo&&!u.hired)return go('profile',{id:u.id});
     return go('home');
   }
   if(up){
     if(S.users.some(u=>u.email===email))return toast('An account with that email already exists. Sign in instead.');
-    const u={id:uid(),name:$('#a-name').value.trim(),email,phone:$('#a-phone').value.trim(),trade:$('#a-trade').value,role:S.users.length?'worker':'admin',pin:await hash(pin,email),created:now(),active:true};
+    const u={id:uid(),name:$('#a-name').value.trim(),email,phone:$('#a-phone').value.trim(),trade:mkJob($('#a-trade').value,$('#a-yr').value),sto:($('#a-sto')?.value||'').trim(),role:S.users.length?'worker':'admin',pin:await hash(pin,email),created:now(),active:true};
     S.users.push(u);save('users');ME=u;
     try{localStorage.setItem(SESSION_KEY,ME.id)}catch(e){}
     toast('Account created. Finish your profile and add your certificates.');return go('profile',{id:u.id});
@@ -295,6 +306,7 @@ function dueItems(){
   const out=[];
   if(!mySig())out.push(['bad','Read and sign the company policy (Policy tab).']);
   if(isOffice()){const miss=S.users.filter(u=>u.active!==false&&u.id!==ME.id&&!S.policysigs.some(p=>p.userId===u.id&&p.version===POLICY_VERSION));if(miss.length)out.push(['warn',`${miss.length} worker(s) have not signed the company policy.`])}
+  if(!ME.trade)out.push(['warn','Choose your job title in My profile.']);
   const myTr=S.training.filter(t=>isOffice()||t.userId===ME.id);
   for(const t of myTr)if(t.expiry){const d=-daysSince(t.expiry),nm=t.course==='other'&&t.label?t.label:courseName(t.course);if(d<0)out.push(['bad',`${userName(t.userId)}: ${nm} expired`]);else if(d<=45)out.push(['warn',`${userName(t.userId)}: ${nm} expires in ${dayWord(d)}`])}
   for(const q of S.equip)if(q.status==='out')out.push(['bad',`Out of service: ${INSP[q.type]?.name||q.type} ${q.serial}`]);
@@ -552,15 +564,21 @@ VIEWS.cleanup=()=>{if(!isAdmin())return '<h1>Clean up test data</h1><p class="mu
 
 /* ================= RECORDS ================= */
 const KIND={policysigs:['Policy sign-off','pol'],dailies:['Daily check','daily'],insps:['Inspection','insp'],talks:['Toolbox talk','talk'],incidents:['Incident','inc'],checkins:['Check-in','ci']};
-let recFilter='all',recSite='';
+let recFilter='all',recSite='',recUser='',recFrom='',recTo='';
 VIEWS.records=()=>{
   let rows=[];
   for(const k of Object.keys(KIND)){if(recFilter!=='all'&&recFilter!==k)continue;for(const r of mine(S[k]))rows.push([k,r])}
   if(recSite)rows=rows.filter(([k,r])=>r.siteId===recSite);
+  if(recUser)rows=rows.filter(([k,r])=>r.userId===recUser||(k==='talks'&&(r.att||[]).some(a=>a.userId===recUser)));
+  if(recFrom)rows=rows.filter(([k,r])=>dayOf(r.at||r.inAt)>=recFrom);
+  if(recTo)rows=rows.filter(([k,r])=>dayOf(r.at||r.inAt)<=recTo);
   rows.sort((a,b)=>(b[1].at||b[1].inAt).localeCompare(a[1].at||a[1].inAt));
   return `<h1>Records</h1><p class="mute">${isOffice()?'Everyone\'s records on this device.':'Your records.'} Every record keeps its time, location and signature for COR evidence.</p>
   <div class="chips">${[['all','All'],...Object.entries(KIND).map(([k,v])=>[k,v[0]+'s'])].map(([k,l])=>`<button class="chip ${recFilter===k?'on':''}" data-act="recf" data-v="${k}">${esc(l)}</button>`).join('')}</div>
-  <label class="f" for="r-site">Site</label><select id="r-site" data-act-change="recsite"><option value="">All sites</option>${S.sites.map(s=>`<option value="${s.id}" ${recSite===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select><p></p>
+  <label class="f" for="r-site">Site</label><select id="r-site" data-act-change="recsite"><option value="">All sites</option>${S.sites.map(s=>`<option value="${s.id}" ${recSite===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select>
+  ${isOffice()?`<label class="f" for="r-user">Worker</label><select id="r-user" data-act-change="recuser"><option value="">All workers</option>${S.users.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(u=>`<option value="${esc(u.id)}" ${recUser===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>`:''}
+  <div class="row"><div style="flex:1"><label class="f" for="r-from">From</label><input id="r-from" type="date" value="${esc(recFrom)}" data-act-change="recfrom"></div><div style="flex:1"><label class="f" for="r-to">To</label><input id="r-to" type="date" value="${esc(recTo)}" data-act-change="recto"></div></div>
+  ${recSite||recUser||recFrom||recTo||recFilter!=='all'?'<p><button class="btn sm" data-act="recclear">Clear filters</button></p>':''}<p class="small mute">${rows.length} record(s)</p>
   <div class="card">${rows.length?`<div class="list">${rows.slice(0,200).map(([k,r])=>`<div class="it" data-act="openRec" data-k="${k}" data-v="${esc(r.id)}"><span class="pill ${recPill(k,r)[0]}">${esc(KIND[k][0])}</span><div class="m"><b>${esc(recTitle(k,r))}</b><div class="small mute">${fmt(r.at||r.inAt)} • ${esc(userName(r.userId))} • ${esc(siteName(r.siteId))}</div></div><span class="small">${esc(recPill(k,r)[1])}</span></div>`).join('')}</div>`:'<p class="mute">No records yet.</p>'}</div>`};
 function recTitle(k,r){if(k==='policysigs')return 'Company policy signed by '+r.name;return k==='insps'?(INSP[r.type]?.name||r.type)+' '+(r.f?.serial||''):k==='talks'?r.title:k==='incidents'?(INC_TYPES.find(t=>t[0]===r.type)||[])[1]:k==='dailies'?(r.task||'Daily check').slice(0,60):'Checked in'}
 function recPill(k,r){if(k==='policysigs')return r.guest?['warn',r.role||'Guest']:['ok','Signed'];if(k==='insps')return r.pass?['ok','Pass']:['bad','Fail'];if(k==='incidents')return r.investigation?['ok','Investigated']:['bad','Open'];if(k==='checkins')return r.far?['warn','Flag']:['ok',r.outAt?'Left':'On site'];if(k==='dailies')return Object.values(r.ans||{}).includes('n')?['warn','Issues']:['ok','OK'];return ['ok','']}
@@ -597,6 +615,23 @@ function incBody(r){
 
 /* ================= TRAINING ================= */
 const courseName=c=>(COURSES.find(x=>x[0]===c)||[0,c])[1];
+const CORE=['wah','awareness','orient','whmis','firstaid','loto','ewp'];
+function trStatus(t){const d=t.expiry?-daysSince(t.expiry):null;return d==null?['ok','No expiry']:d<0?['bad','Expired']:d<=45?['warn','Expires in '+d+' d']:['ok','Current']}
+let empQ='';
+VIEWS.employees=()=>{if(!isOffice())return '<h1>Employees</h1><p class="mute">Office only.</p>';
+  const q=empQ.toLowerCase();const ppl=S.users.filter(u=>u.active!==false&&(!q||(u.name+' '+(u.trade||'')).toLowerCase().includes(q))).sort((a,b)=>a.name.localeCompare(b.name));
+  return `<h1>Employees</h1><p class="mute">Everyone working for 20 Vision Electric. Tap a name to show their certificates and training, for example to a Ministry of Labour inspector.</p>
+  <input id="emp-q" placeholder="Search by name or job title" value="${esc(empQ)}" data-act-input="empq"><p></p>
+  <div class="card"><div class="list">${ppl.map(u=>{const tr=S.training.filter(t=>t.userId===u.id);const exp=tr.filter(t=>trStatus(t)[0]==='bad').length,soon=tr.filter(t=>trStatus(t)[0]==='warn').length;return `<div class="it" data-act="go" data-v="employee" data-k="${esc(u.id)}" style="cursor:pointer">${u.photo?`<img src="${img(u.photo)}" alt="" style="width:46px;height:46px;border-radius:50%;object-fit:cover">`:`<span class="pill" style="width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center">${esc((u.name||'?')[0])}</span>`}<div class="m"><b>${esc(u.name)}</b><div class="small mute">${esc(u.trade||'')}${isApp(u.trade)?' • STO '+(u.sto?esc(u.sto):'<b>missing</b>'):''} • ${tr.length} certificate(s)</div></div>${exp?`<span class="pill bad">${exp} expired</span>`:soon?`<span class="pill warn">${soon} expiring</span>`:tr.length?'<span class="pill ok">Current</span>':'<span class="pill bad">None on file</span>'}</div>`}).join('')||'<p class="mute">No one found.</p>'}</div></div>`};
+VIEWS.employee=()=>{if(!isOffice())return '<p>Office only.</p>';const u=S.users.find(x=>x.id===V.p.id);if(!u)return '<p>Employee not found.</p>';
+  const tr=S.training.filter(t=>t.userId===u.id).sort((a,b)=>courseName(a.course).localeCompare(courseName(b.course)));
+  const miss=CORE.filter(c=>!tr.some(t=>t.course===c));
+  const pol=S.policysigs.filter(p=>p.userId===u.id).sort((a,b)=>b.at.localeCompare(a.at))[0];
+  return `<div class="row noprint"><button class="btn sm" data-act="go" data-v="employees">Back</button><button class="btn sm pri" data-act="pdf">Save as PDF</button>${isAdmin()?`<button class="btn sm" data-act="go" data-v="profile" data-k="${esc(u.id)}">Edit profile</button>`:''}</div><p></p><div id="rec">
+  <div class="hero"><div class="stripe"></div><div class="in"><p class="small mute">20 Vision Electric Inc. • Training record</p><div class="row">${u.photo?`<img src="${img(u.photo)}" alt="" style="width:84px;height:84px;border-radius:50%;object-fit:cover;flex:none">`:''}<div><h1 style="margin:0">${esc(u.name)}</h1><div class="mute">${esc(u.trade||'')}</div></div></div>
+  <dl class="kv" style="margin-top:10px">${isApp(u.trade)?`<dt>STO apprentice no.</dt><dd>${u.sto?esc(u.sto):'<b>Not entered</b>'}</dd>`:''}${u.hired?`<dt>Hired</dt><dd>${fmtD(u.hired)}</dd>`:''}<dt>Phone</dt><dd>${esc(u.phone||'')}</dd><dt>Email</dt><dd>${esc(u.email||'')}</dd><dt>Company policy</dt><dd>${pol?'Signed '+fmtD(dayOf(pol.at))+(pol.version!==POLICY_VERSION?' (older version)':''):'<b>Not signed</b>'}</dd></dl></div></div><p></p>
+  ${miss.length?`<div class="warnbox">Not on file: ${miss.map(courseName).join(', ')}</div><p></p>`:''}
+  <div class="card"><h2>Certificates and training (${tr.length})</h2>${tr.length?`<div class="list">${tr.map(t=>{const files=t.files||(t.photo?[{name:'certificate.jpg',type:'image/jpeg',data:t.photo}]:[]);const st=trStatus(t);return `<div class="it" style="align-items:flex-start">${files[0]&&files[0].type.startsWith('image')?`<img src="${img(files[0].data)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:8px">`:''}<div class="m"><b>${esc(t.course==='other'&&t.label?t.label:courseName(t.course))}</b><div class="small mute">${t.number?'No. '+esc(t.number)+' • ':''}${t.date?'Issued '+fmtD(t.date):''}${t.expiry?' • expires '+fmtD(t.expiry):''}</div><div class="row noprint" style="margin-top:6px">${files.map((f,i)=>`<button class="btn sm" data-act="openFile" data-v="${t.id}:${i}">Open ${esc(f.name.slice(0,24))}</button>`).join('')}</div></div><span class="pill ${st[0]}">${st[1]}</span></div>`}).join('')}</div>`:'<p class="mute">No certificates attached yet.</p>'}</div></div>`};
 VIEWS.training=()=>{
   const people=isOffice()?S.users.filter(u=>u.active!==false):[ME];
   return `<h1>Training records</h1><p>Keep a record and certificate photo for each course. Working at Heights training must be renewed every 3 years (O. Reg. 297/13). COR element 8.1.</p>
@@ -606,7 +641,7 @@ VIEWS.training=()=>{
 VIEWS.profile=()=>{
   const id=V.p.id||ME.id;const u=S.users.find(x=>x.id===id);if(!u)return '<p>Profile not found.</p>';
   const can=u.id===ME.id||isAdmin();
-  if(D.kind!=='prof'||D.id!==u.id)D={kind:'prof',id:u.id,name:u.name,photo:u.photo||null,address:u.address||'',phone:u.phone||'',email:u.email,title:u.trade||'',hired:u.hired||'',emerg:u.emerg||''};
+  if(D.kind!=='prof'||D.id!==u.id)D={kind:'prof',id:u.id,name:u.name,photo:u.photo||null,address:u.address||'',phone:u.phone||'',email:u.email,title:u.trade||'',hired:u.hired||'',emerg:u.emerg||'',sto:u.sto||''};
   const tr=S.training.filter(t=>t.userId===u.id).sort((a,b)=>courseName(a.course).localeCompare(courseName(b.course)));
   const need=['wah','awareness','orient','whmis','firstaid','loto','ewp'].filter(c=>!tr.some(t=>t.course===c));
   return `<h1>${u.id===ME.id?'My profile':esc(u.name)}</h1>
@@ -614,7 +649,8 @@ VIEWS.profile=()=>{
    <div class="row"><label class="ph ${D.photo?'done':''}" id="ph-prof" style="width:120px;flex:none;border-radius:50%">${D.photo?`<img src="${img(D.photo)}" alt="Profile photo">`:'Add profile photo'}${can?'<input type="file" accept="image/*" data-prof="1" aria-label="Profile photo">':''}</label>
    <div><b style="font-size:20px">${esc(u.name)}</b><div class="small mute">${esc(u.trade||'')} • ${esc(u.role)}</div>${u.hired?`<div class="small mute">Hired ${fmtD(u.hired)}</div>`:''}</div></div>
    ${[['name','Full name','text'],['address','Home address','text'],['phone','Cell phone','tel'],['email','Email','email'],['hired','Date hired','date'],['emerg','Emergency contact (name and phone)','text']].map(([k,l,ty])=>`<label class="f" for="p-${k}">${l}</label><input id="p-${k}" type="${ty}" data-bind="${k}" value="${esc(D[k]||'')}" ${can&&!(k==='email')?'':'readonly'}>`).join('')}
-   <label class="f" for="p-title">Job title</label><select id="p-title" data-bind="title" ${isAdmin()||u.id===ME.id?'':'disabled'}>${JOBS.map(j=>`<option ${D.title===j?'selected':''}>${j}</option>`).join('')}</select>
+   <label class="f" for="p-title">Job title</label><select id="p-title" ${isAdmin()||u.id===ME.id?'':'disabled'}>${jobOpts(D.title)}</select>
+   <div id="p-sto-w" style="display:${isApp(D.title)?'':'none'}"><label class="f" for="p-yr">Apprentice year</label><select id="p-yr" ${can?'':'disabled'}>${yrOpts(appYr(D.title))}</select><label class="f" for="p-sto">Skilled Trades Ontario (STO) apprentice number</label><input id="p-sto" data-bind="sto" value="${esc(D.sto||'')}" ${can?'':'disabled'}></div>
    ${can?'<p></p><button class="btn pri block" data-act="saveProfile">Save profile</button>':''}
    <p class="small mute">Your address, phone, hire date and emergency contact are only seen by you and the office.</p></div>
   <div class="card"><h2>Certificates and documents</h2><p class="small mute">Attach a photo or PDF of every ticket and card: working at heights, lift licence, first aid, lockout, WHMIS, WSIB papers and anything else.</p>
@@ -625,7 +661,10 @@ VIEWS.profile=()=>{
     ${d==null?'<span class="pill ok">On file</span>':d<0?'<span class="pill bad">Expired</span>':d<=45?'<span class="pill warn">'+dayWord(d)+'</span>':'<span class="pill ok">Current</span>'}</div>`}).join('')||'<p class="mute">Nothing attached yet.</p>'}</div></div></div>`};
 async function saveProfile(){
   const u=S.users.find(x=>x.id===D.id);if(!D.name.trim())return toast('Name is required.');
-  Object.assign(u,{name:D.name.trim(),photo:D.photo,address:D.address.trim(),phone:D.phone.trim(),hired:D.hired,emerg:D.emerg.trim(),trade:D.title,updated:now()});
+  if(!D.title)return toast('Choose a job title.');
+  if(isApp(D.title)&&!appYr(D.title))return toast('Choose the apprentice year.');
+  if(isApp(D.title)&&!(D.sto||'').trim())return toast('Enter the Skilled Trades Ontario (STO) apprentice number.');
+  Object.assign(u,{name:D.name.trim(),photo:D.photo,address:D.address.trim(),phone:D.phone.trim(),hired:D.hired,emerg:D.emerg.trim(),trade:D.title,sto:isApp(D.title)?(D.sto||'').trim():(u.sto||''),updated:now()});
   save('users');if(u.id===ME.id)ME=u;toast('Profile saved.');render()}
 function readFile(f){return new Promise(res=>{if(f.type.startsWith('image/'))return compress(f).then(d=>res(d&&{name:f.name,type:'image/jpeg',data:d}));if(f.size>8e6){toast('That file is over 8 MB. Take a photo of it instead.');return res(null)}const r=new FileReader();r.onload=()=>res({name:f.name,type:f.type||'application/pdf',data:r.result});r.onerror=()=>res(null);r.readAsDataURL(f)})}
 async function openWith(name,dataUrl){const P=window.Capacitor.Plugins;const mime=(dataUrl.match(/^data:([^;,]+)/)||[])[1]||'application/octet-stream';const r=await P.Filesystem.writeFile({path:name.replace(/[^\w.\-]+/g,'_'),data:dataUrl.split(',')[1],directory:'CACHE'});
@@ -782,6 +821,7 @@ VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   <button class="tile" data-act="go" data-v="updates"><b>Safety updates</b><span>Weekly</span></button>
   ${isOffice()?`<button class="tile" data-act="go" data-v="policyadmin"><b>Policy sign-offs</b><span>QR code and signatures</span></button>
   <button class="tile" data-act="go" data-v="sites"><b>Job sites</b><span>Location and emergency plan</span></button>
+  ${isOffice()?`<button class="tile" data-act="go" data-v="employees"><b>Employees</b><span>Certificates and training</span></button>`:''}
   <button class="tile" data-act="go" data-v="crew"><b>Crew</b><span>Accounts and roles</span></button>
   ${isAdmin()?`<button class="tile" data-act="go" data-v="cleanup"><b>Clean up test data</b><span>Delete test workers and records</span></button>`:''}
   <button class="tile" data-act="go" data-v="equiplist"><b>Equipment list</b><span>COR element 7</span></button>
@@ -818,7 +858,7 @@ function bindSig(){document.querySelectorAll('canvas.sig[data-sig]').forEach(cv=
 
 /* ================= events ================= */
 function setPath(o,path,v){const ks=path.split('.');let c=o;for(let i=0;i<ks.length-1;i++){c[ks[i]]=c[ks[i]]||{};c=c[ks[i]]}c[ks.at(-1)]=v}
-document.addEventListener('input',e=>{const b=e.target.dataset?.bind;if(b)setPath(D,b,e.target.value);const id=e.target.id;if(id==='n-sup-o')D.supervisor=e.target.value.trim();if(id==='n-inj-o'){D.injured=e.target.value.trim();const st=$('#inj-st');if(st&&D.injured&&st.style.display==='none'){st.style.display='';PADS.isig=sigPad(st.querySelector('canvas.sig'),d=>{D.isig=d})}}});
+document.addEventListener('input',e=>{const b=e.target.dataset?.bind;if(b)setPath(D,b,e.target.value);const id=e.target.id;if(id==='emp-q'){empQ=e.target.value;render();const q=$('#emp-q');if(q){q.focus();q.setSelectionRange(q.value.length,q.value.length)}return}if(id==='n-sup-o')D.supervisor=e.target.value.trim();if(id==='n-inj-o'){D.injured=e.target.value.trim();const st=$('#inj-st');if(st&&D.injured&&st.style.display==='none'){st.style.display='';PADS.isig=sigPad(st.querySelector('canvas.sig'),d=>{D.isig=d})}}});
 document.addEventListener('change',async e=>{
   const t=e.target;
   if(t.dataset?.bind)setPath(D,t.dataset.bind,t.value);
@@ -827,6 +867,11 @@ document.addEventListener('change',async e=>{
   const a=t.dataset?.actChange;
   if(a==='pickEquip'){const q=S.equip.find(x=>x.id===t.value);D.equipId=t.value||null;if(q)D.f={...(q.fields||{}),serial:q.serial};render()}
   if(a==='recsite'){recSite=t.value;render()}
+  if(a==='recuser'){recUser=t.value;render()}
+  if(a==='recfrom'){recFrom=t.value;render()}
+  if(a==='recto'){recTo=t.value;render()}
+  if(t.id==='a-trade'){const w=$('#a-sto-w');if(w)w.style.display=isApp(t.value)?'':'none'}
+  if(t.id==='p-title'||t.id==='p-yr'){const j=$('#p-title').value,y=$('#p-yr').value;D.title=mkJob(j,y);const w=$('#p-sto-w');if(w)w.style.display=j==='Apprentice'?'':'none'}
   if(a==='incPick'){const k=t.dataset.k,f=k==='sup'?'supervisor':'injured',pf=k==='sup'?'supPick':'injuredPick';D[pf]=t.value;const o=$('#n-'+k+'-o');o.style.display=t.value==='other'?'':'none';D[f]=t.value==='other'?o.value.trim():t.value?userName(t.value):'';if(t.value==='other')o.focus();if(k==='inj'){const b=$('#inj-st');if(b){const was=b.style.display;b.style.display=D[f]||t.value==='other'?'':'none';if(was==='none'&&b.style.display===''){const cv=b.querySelector('canvas.sig');PADS.isig=sigPad(cv,d=>{D.isig=d})}}}}
   if(a==='showpw'){for(const i of document.querySelectorAll('#a-pin,#a-pin2'))i.type=t.checked?'text':'password'}
   if(a==='role'){const u=S.users.find(x=>x.id===t.dataset.v);u.role=t.value;save('users');toast('Role updated.')}
@@ -842,6 +887,7 @@ const ACT={
   forgot:async()=>{const em=($('#a-email')?.value||'').trim();if(!em)return toast('Type your email first, then tap Forgot password.');try{await CLOUD.init();await CLOUD.reset(em);toast('Password reset email sent to '+em)}catch(e){toast('Could not send the reset email.')}},
   doCheckin:t=>doCheckin(t.dataset.v),
   doCheckinOther:()=>doCheckinOther(),
+  recclear:()=>{recFilter='all';recSite='';recUser='';recFrom='';recTo='';render()},
   delRec:t=>delRecord(t.dataset.k,t.dataset.v),
   delWorker:t=>delWorker(t.dataset.v,false),
   clearRecs:t=>delWorker(t.dataset.v,true),
