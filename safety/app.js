@@ -475,26 +475,39 @@ async function saveTalk(){
 
 /* ================= INCIDENTS ================= */
 VIEWS.incident=()=>{
-  if(D.kind!=='inc')D={kind:'inc',type:'',when:new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,16),photos:[],injured:'',desc:'',body:'',firstaid:'',witness:'',immediate:'',cause:'',siteId:activeCheckin()?.siteId||''};
+  if(D.kind!=='inc')D={kind:'inc',type:'',when:new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,16),photos:[],injured:'',injuredPick:'',supPick:'',supervisor:'',stmt:'',isig:'',idate:today(),noSign:false,desc:'',body:'',firstaid:'',witness:'',immediate:'',cause:'',siteId:activeCheckin()?.siteId||''};
   return `<h1>Report an incident</h1><div class="warnbox"><b>Emergency? Call 911 first.</b> Critical injury: protect the scene and call the office right away.</div><p></p>
   <div class="card"><h3>What happened?</h3><div class="chips">${INC_TYPES.map(t=>`<button class="chip ${D.type===t[0]?'on':''}" data-act="incType" data-v="${t[0]}">${esc(t[1])}</button>`).join('')}</div>
   <div id="increp">${repBox(D.type)}</div>
   <label class="f" for="n-site">Site</label><select id="n-site" data-bind="siteId"><option value="">Choose</option>${D.siteId&&String(D.siteId).startsWith('u:')?`<option value="${esc(D.siteId)}" selected>${esc(siteName(D.siteId))}</option>`:''}${S.sites.map(s=>`<option value="${s.id}" ${D.siteId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select>
   <label class="f" for="n-when">Date and time it happened</label><input id="n-when" type="datetime-local" data-bind="when" value="${esc(D.when)}">
   <label class="f" for="n-desc">Describe what happened</label><textarea id="n-desc" data-bind="desc">${esc(D.desc)}</textarea>
-  <label class="f" for="n-inj">Injured person (if any)</label><input id="n-inj" data-bind="injured" value="${esc(D.injured)}">
+  ${pickPerson('sup','Supervisor or foreman on site',D.supPick,D.supervisor,true)}
+  ${pickPerson('inj','Injured person (if any)',D.injuredPick,D.injured,false)}
   <label class="f" for="n-body">Injury and body part</label><input id="n-body" data-bind="body" value="${esc(D.body)}">
   <label class="f" for="n-fa">First aid given / by whom</label><input id="n-fa" data-bind="firstaid" value="${esc(D.firstaid)}">
   <label class="f" for="n-wit">Witnesses</label><input id="n-wit" data-bind="witness" value="${esc(D.witness)}">
   <label class="f" for="n-imm">What was done right away to make it safe?</label><textarea id="n-imm" data-bind="immediate">${esc(D.immediate)}</textarea>
   <label class="f" for="n-cause">Why do you think it happened?</label><textarea id="n-cause" data-bind="cause">${esc(D.cause)}</textarea>
+  <div id="inj-st" style="display:${D.injured?'':'none'}"><h3 style="margin-top:14px">Injured worker's statement</h3><p class="small mute">The injured worker fills this in and signs, in their own words.</p>
+  <label class="f" for="n-stmt">What happened, in your own words</label><textarea id="n-stmt" data-bind="stmt">${esc(D.stmt)}</textarea>
+  <label class="f">Injured worker's signature</label><canvas class="sig" data-sig="isig"></canvas><button class="btn sm" data-act="clearsig" data-v="isig">Clear</button>
+  <label class="f" for="n-idate">Date signed</label><input id="n-idate" type="date" data-bind="idate" value="${esc(D.idate)}">
+  <label class="chkline"><input type="checkbox" id="n-nosign" ${D.noSign?'checked':''}> Injured worker can't sign now (taken for treatment). Get their statement later.</label></div>
   <h3 style="margin-top:14px">Photos</h3><div class="photos">${[0,1,2,3].map(i=>`<label class="ph ${D.photos[i]?'done':''}" id="ph-${i}">${D.photos[i]?`<img src="${img(D.photos[i])}" alt="">`:'Add photo'}<input type="file" accept="image/*" capture="environment" data-photo="${i}" aria-label="Incident photo ${i+1}"></label>`).join('')}</div></div><p></p>
   <button class="btn red block" data-act="saveInc">Submit report</button>`};
+function pickPerson(id,label,pick,val,sup){const ppl=S.users.filter(u=>u.active!==false).sort((a,b)=>(sup?((b.role!=='worker')-(a.role!=='worker')):0)||a.name.localeCompare(b.name));
+  return `<label class="f" for="n-${id}">${label}</label><select id="n-${id}" data-act-change="incPick" data-k="${id}"><option value="">${sup?'Choose':'No one injured'}</option>${ppl.map(u=>`<option value="${esc(u.id)}" ${pick===u.id?'selected':''}>${esc(u.name)}${u.trade?' – '+esc(u.trade):''}</option>`).join('')}<option value="other" ${pick==='other'?'selected':''}>Someone else (type the name)</option></select>
+  <input id="n-${id}-o" placeholder="Full name" style="display:${pick==='other'?'':'none'};margin-top:6px" value="${pick==='other'?esc(val):''}" data-k="${id}">`}
 function repBox(t){const r=REPORTING[t];if(!r)return '';return `<div class="${['critical','medical','lost','shock'].includes(t)?'warnbox':'infobox'}" style="margin-top:12px"><b>Ontario reporting for this type</b><ul>${r.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`}
 async function saveInc(){
   if(!D.type)return toast('Pick what happened.');
   if(!D.desc.trim())return toast('Describe what happened.');
   if(!D.siteId)return toast('Pick the site.');
+  if(!D.supervisor.trim())return toast('Pick the supervisor or foreman on site.');
+  D.noSign=!!$('#n-nosign')?.checked;
+  if(D.injured&&!D.noSign){if(!D.stmt.trim())return toast('The injured worker needs to write what happened.');if(!D.isig)return toast('The injured worker needs to sign.');if(!D.idate)return toast('Add the date the injured worker signed.')}
+  if(!D.injured){D.stmt='';D.isig='';D.idate='';D.noSign=false}
   let loc=null;try{loc=await getLoc()}catch(e){}
   const r={id:uid(),userId:ME.id,at:now(),loc,...D,steps:{},investigation:null};delete r.kind;
   S.incidents.push(r);save('incidents');
@@ -538,8 +551,8 @@ VIEWS.record=()=>{
 function incBody(r){
   const t=new Date(r.when||r.at);const dl=h=>new Date(t.getTime()+h*36e5);
   const deadlines={critical:[['Phone Ministry (1-877-202-0008)',0],['Written report to Ministry, JHSC/rep, union',48],['WSIB Form 7',72]],medical:[['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],lost:[['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],shock:[['Medical assessment',0],['Written notice to JHSC/rep (s.52)',96],['WSIB Form 7',72]],property:[['Check if s.53 notice is needed (2 days)',48]]}[r.type]||[];
-  return `<div class="card"><dl class="kv"><dt>Happened</dt><dd>${fmt(r.when)}</dd><dt>Injured</dt><dd>${esc(r.injured||'None')}</dd><dt>Injury</dt><dd>${esc(r.body||'')}</dd><dt>First aid</dt><dd>${esc(r.firstaid||'')}</dd><dt>Witnesses</dt><dd>${esc(r.witness||'')}</dd></dl>
-  <h3 style="margin-top:12px">What happened</h3><p>${esc(r.desc)}</p><h3>Made safe by</h3><p>${esc(r.immediate||'')}</p><h3>Reporter's view of cause</h3><p>${esc(r.cause||'')}</p>
+  return `<div class="card"><dl class="kv"><dt>Happened</dt><dd>${fmt(r.when)}</dd>${r.supervisor?`<dt>Supervisor / foreman</dt><dd>${esc(r.supervisor)}</dd>`:''}<dt>Injured</dt><dd>${esc(r.injured||'None')}</dd><dt>Injury</dt><dd>${esc(r.body||'')}</dd><dt>First aid</dt><dd>${esc(r.firstaid||'')}</dd><dt>Witnesses</dt><dd>${esc(r.witness||'')}</dd></dl>
+  <h3 style="margin-top:12px">What happened</h3><p>${esc(r.desc)}</p><h3>Made safe by</h3><p>${esc(r.immediate||'')}</p><h3>Reporter's view of cause</h3><p>${esc(r.cause||'')}</p>${r.injured?`<h3>Injured worker's statement</h3>${r.noSign?'<p class="warnbox">Injured worker could not sign at the time (taken for treatment). Get their written statement.</p>':`<p>${esc(r.stmt||'')}</p><img src="${img(r.isig)}" alt="Injured worker signature" style="max-width:280px;background:#fff"><p class="small">${esc(r.injured)} • signed ${fmtD(r.idate)}</p>`}`:''}
   ${(r.photos||[]).filter(Boolean).length?`<div class="photos">${(r.photos||[]).filter(Boolean).map(p=>`<div class="ph done"><img src="${img(p)}" alt=""></div>`).join('')}</div>`:''}</div><p></p>
   ${deadlines.length?`<div class="card"><h3>Reporting deadlines</h3>${deadlines.map(([l,h],i)=>{const done=r.steps[i];const due=h?dl(h*(h===72?1:1)):t;return `<div class="chk"><div>${esc(l)}<div class="ref">${h===72?'Due within 3 business days':h===0?'Right away':'Due '+fmt(due.toISOString())}</div></div>${done?`<span class="pill ok">Done ${fmt(done.at)}</span>`:isOffice()?`<button class="btn sm" data-act="incStep" data-k="${esc(r.id)}" data-v="${i}">Mark done</button>`:'<span class="pill warn">Office</span>'}</div>`}).join('')}</div><p></p>`:''}
   <div class="card"><h3>Investigation (COR element 10)</h3>${r.investigation?`<dl class="kv"><dt>Root cause</dt><dd>${esc(r.investigation.root)}</dd><dt>Corrective action</dt><dd>${esc(r.investigation.fix)}</dd><dt>By</dt><dd>${esc(userName(r.investigation.by))}, ${fmt(r.investigation.at)}</dd></dl>`
@@ -767,7 +780,7 @@ function bindSig(){document.querySelectorAll('canvas.sig[data-sig]').forEach(cv=
 
 /* ================= events ================= */
 function setPath(o,path,v){const ks=path.split('.');let c=o;for(let i=0;i<ks.length-1;i++){c[ks[i]]=c[ks[i]]||{};c=c[ks[i]]}c[ks.at(-1)]=v}
-document.addEventListener('input',e=>{const b=e.target.dataset?.bind;if(b)setPath(D,b,e.target.value)});
+document.addEventListener('input',e=>{const b=e.target.dataset?.bind;if(b)setPath(D,b,e.target.value);const id=e.target.id;if(id==='n-sup-o')D.supervisor=e.target.value.trim();if(id==='n-inj-o'){D.injured=e.target.value.trim();const st=$('#inj-st');if(st&&D.injured&&st.style.display==='none'){st.style.display='';PADS.isig=sigPad(st.querySelector('canvas.sig'),d=>{D.isig=d})}}});
 document.addEventListener('change',async e=>{
   const t=e.target;
   if(t.dataset?.bind)setPath(D,t.dataset.bind,t.value);
@@ -776,6 +789,7 @@ document.addEventListener('change',async e=>{
   const a=t.dataset?.actChange;
   if(a==='pickEquip'){const q=S.equip.find(x=>x.id===t.value);D.equipId=t.value||null;if(q)D.f={...(q.fields||{}),serial:q.serial};render()}
   if(a==='recsite'){recSite=t.value;render()}
+  if(a==='incPick'){const k=t.dataset.k,f=k==='sup'?'supervisor':'injured',pf=k==='sup'?'supPick':'injuredPick';D[pf]=t.value;const o=$('#n-'+k+'-o');o.style.display=t.value==='other'?'':'none';D[f]=t.value==='other'?o.value.trim():t.value?userName(t.value):'';if(t.value==='other')o.focus();if(k==='inj'){const b=$('#inj-st');if(b){const was=b.style.display;b.style.display=D[f]||t.value==='other'?'':'none';if(was==='none'&&b.style.display===''){const cv=b.querySelector('canvas.sig');PADS.isig=sigPad(cv,d=>{D.isig=d})}}}}
   if(a==='showpw'){for(const i of document.querySelectorAll('#a-pin,#a-pin2'))i.type=t.checked?'text':'password'}
   if(a==='role'){const u=S.users.find(x=>x.id===t.dataset.v);u.role=t.value;save('users');toast('Role updated.')}
   if(t.id==='imp'){const f=t.files[0];if(!f)return;try{const j=JSON.parse(await f.text());if(!Array.isArray(j.users)||!j.users.length)throw 0;for(const k of KEYS)if(j[k]!==undefined&&k!=='cordocs'&&k!=='meta'&&!Array.isArray(j[k]))throw 0;if(!await ask('Restore backup?','This replaces all records on this device with the backup.','Restore',true))return;for(const k of KEYS)if(j[k]!==undefined){S[k]=j[k];save(k)}ME=S.users.find(u=>u.id===ME.id&&u.active!==false)||null;if(!ME){try{localStorage.removeItem(SESSION_KEY)}catch(e){}}toast('Backup restored.');t.value='';render()}catch(err){toast('That file is not a Site Safety backup.')}}
