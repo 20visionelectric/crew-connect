@@ -728,7 +728,7 @@ VIEWS.more=()=>`<h1>More</h1><div class="tiles">
   ${canCor()?`<button class="tile" data-act="go" data-v="cor"><b>COR readiness</b><span>14 elements</span></button>`:''}
   <button class="tile" data-act="go" data-v="actions"><b>Corrective actions</b><span>Open items</span></button>
   <button class="tile" data-act="go" data-v="emerg"><b>Emergency info</b><span>Per site</span></button>
-  <button class="tile" data-act="go" data-v="socials"><b>Safety Socials</b><span>Do / Don't</span></button>
+  <button class="tile" data-act="go" data-v="socials"><b>Safety Socials</b><span>Do's / Don'ts</span></button>
   <button class="tile" data-act="go" data-v="updates"><b>Safety updates</b><span>Weekly</span></button>
   ${isOffice()?`<button class="tile" data-act="go" data-v="policyadmin"><b>Policy sign-offs</b><span>QR code and signatures</span></button>
   <button class="tile" data-act="go" data-v="sites"><b>Job sites</b><span>Location and emergency plan</span></button>
