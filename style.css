@@ -102,3 +102,10 @@ body.native:not(:has(.nav)) .safety{bottom:env(safe-area-inset-bottom)}
 .locbtn{width:48px;height:48px;border-radius:50%;border:0;background:#fff;color:#333;font-size:26px;line-height:48px;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:pointer;margin:0 6px 18px 0}
 .locbtn.on{color:#2b7bff}
 .medot{width:20px;height:20px;border-radius:50%;background:#2b7bff;border:3px solid #fff;box-shadow:0 0 0 2px rgba(43,123,255,.35),0 1px 4px rgba(0,0,0,.4)}
+.msg .msgacts{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}.msg .msgacts button{background:none;border:0;color:inherit;opacity:.7;font-size:12px;text-decoration:underline;padding:2px;min-height:28px;cursor:pointer}
+.msg.stk{background:transparent!important;border:0!important}.sticker{width:110px;height:110px;display:block}
+.picker{margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:8px;background:rgba(255,255,255,.03)}
+.ptabs{display:flex;gap:6px;margin-bottom:8px}.ptabs button{flex:1;min-height:36px;border-radius:8px;border:1px solid var(--line);background:none;color:inherit;font-weight:700}.ptabs button.on{background:#d23a26;border-color:#d23a26;color:#fff}
+.egrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(42px,1fr));gap:4px;max-height:180px;overflow:auto}.egrid button{font-size:26px;min-height:44px;background:none;border:0;cursor:pointer;border-radius:8px}.egrid button:active{background:rgba(255,255,255,.1)}
+.sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px;max-height:220px;overflow:auto}.sgrid button{background:none;border:0;padding:2px;cursor:pointer;border-radius:10px}.sgrid img{width:100%;display:block}
+.emobtn{min-width:48px;font-size:22px;padding:0}
