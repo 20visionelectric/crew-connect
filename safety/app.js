@@ -26,6 +26,7 @@ const CLOUD = (() => {
       const b = 'https://www.gstatic.com/firebasejs/10.12.2/';
       await load(b + 'firebase-app-compat.js'); await load(b + 'firebase-auth-compat.js'); await load(b + 'firebase-firestore-compat.js');
       firebase.initializeApp(FIREBASE_CONFIG, 'vss'); const app = firebase.app('vss'); auth = app.auth(); fs = app.firestore();
+      try { await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch (e) {}
       try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) {}
       status = 'signed-out'; inited = true; return true;
     } catch (e) { status = 'error'; return false; }
@@ -187,6 +188,21 @@ function tabOf(v){if(v==='policy')return 'policy';if(['talks','talkrun'].include
 
 /* ================= auth ================= */
 let authMode='in';
+const remOff=()=>{try{return localStorage.getItem('vss-rem')==='0'}catch(e){return false}};
+const rememberedEmail=()=>{try{return localStorage.getItem('vss-rem')==='0'?'':(localStorage.getItem('vss-email')||'')}catch(e){return ''}};
+const BIO={native:false,saved:false,used:false,server:'sitesafety.20visionelectric.com',
+  P(){return window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform()&&window.Capacitor.Plugins.NativeBiometric},
+  async check(){const p=this.P();if(!p)return;try{const a=await p.isAvailable();this.native=!!a.isAvailable;if(this.native){const r=await p.isCredentialsSaved({server:this.server});this.saved=!!r.isSaved}}catch(e){this.native=false}},
+  async save(u,pw){const p=this.P();if(!p||!this.native)return;try{await p.setCredentials({username:u,password:pw,server:this.server});this.saved=true}catch(e){}},
+  forget(){const p=this.P();this.saved=false;this.used=false;if(p)p.deleteCredentials({server:this.server}).catch(()=>{})},
+  async get(){const p=this.P();await p.verifyIdentity({reason:'Sign in to 20 Vision Site Safety',title:'Sign in',subtitle:'Use your fingerprint or face',negativeButtonText:'Use password',useFallback:true});return p.getCredentials({server:this.server})}};
+async function rememberLogin(email,pin,up){
+  const rem=up||!$('#a-rem')||$('#a-rem').checked;
+  try{localStorage.setItem('vss-rem',rem?'1':'0');localStorage.setItem('vss-email',rem?email:'')}catch(e){}
+  if(!rem){BIO.forget();return}
+  if(BIO.native&&CLOUD.on)await BIO.save(email,pin);
+}
+async function bioSignIn(){try{const c=await BIO.get();BIO.used=true;$('#a-email').value=c.username;$('#a-pin').value=c.password;$('#authf').requestSubmit()}catch(e){toast('Fingerprint or face not accepted. Type your password.')}}
 function authView(){
   const C=CLOUD.on,first=!C&&!S.users.length;
   if(first)authMode='up';
@@ -203,8 +219,10 @@ function authView(){
    <label class="f" for="a-pin2">Enter the password again</label><input id="a-pin2" type="password" minlength="8" required autocomplete="new-password">`
    :`<label class="f" for="a-pin">Create a PIN (4 to 6 digits)</label><input id="a-pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
    <label class="f" for="a-pin2">Enter the PIN again</label><input id="a-pin2" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>`}`
-  :`<label class="f" for="a-email">Email</label><input id="a-email" type="email" required autocomplete="email">
+  :`${BIO.saved?`<button class="btn pri block" type="button" data-act="bioSignIn">Sign in with fingerprint or face</button><p class="small mute" style="text-align:center">or type your ${P==='PIN'?'PIN':'password'}</p>`:''}<label class="f" for="a-email">Email</label><input id="a-email" type="email" required autocomplete="email" value="${esc(rememberedEmail())}">
    <label class="f" for="a-pin">${P==='PIN'?'PIN':'Password'}</label><input id="a-pin" type="password" ${C?'autocomplete="current-password"':'inputmode="numeric"'} required>`}
+   <label class="chkline"><input type="checkbox" id="a-show" data-act-change="showpw"> Show ${P==='PIN'?'PIN':'password'}</label>
+   ${authMode==='in'?`<label class="chkline"><input type="checkbox" id="a-rem" ${remOff()?'':'checked'}> Remember me${BIO.native?' (fingerprint or face next time)':''}</label>`:''}
    <p></p><button class="btn pri block" type="submit">${authMode==='up'?'Create my account':'Sign in'}</button></form>
   ${first?'':`<p class="small" style="text-align:center"><a href="#" data-act="authmode">${authMode==='up'?'I already have an account':'New here? Create an account'}</a>${C&&authMode==='in'?' • <a href="#" data-act="forgot">Forgot password</a>':''}</p>`}
   </div></div></div>`}
@@ -223,7 +241,7 @@ async function authSubmit(e){
     let fu;
     try{if(!await CLOUD.init())throw {code:'net'};fu=await CLOUD.signIn(email,pin,up)}
     catch(err){btn.disabled=false;btn.textContent=up?'Create my account':'Sign in';
-      const c=err.code||'';return toast(c.includes('email-already-in-use')?'That email already has an account (maybe from Crew Connect). Sign in instead.':c.includes('weak-password')?'Pick a stronger password.':c==='net'||c.includes('network')?'No internet. Try again when you have signal.':up?'Could not create the account.':'Email or password is wrong.')}
+      const c=err.code||'';return toast(c.includes('email-already-in-use')?'That email already has an account (maybe from Crew Connect). Sign in instead.':c.includes('weak-password')?'Pick a stronger password.':c==='net'||c.includes('network')?'No internet. Try again when you have signal.':up?'Could not create the account.':(BIO.used?(BIO.forget(),'Your password has changed. Type your new password.'):'Email or password is wrong.'))}
     await CLOUD.pull();
     let u=S.users.find(x=>x.id===fu.uid);
     if(!u){const cc=await CLOUD.crewName(fu.uid);
@@ -233,6 +251,7 @@ async function authSubmit(e){
     if(CLOUD.admin&&u.role!=='admin')u.role='admin';
     save('users');ME=u;CLOUD.pushAll();
     try{localStorage.setItem(SESSION_KEY,ME.id)}catch(e){}
+    await rememberLogin(email,pin,up);
     if(up){toast('Account created. Check your email to confirm it. Now finish your profile.');return go('profile',{id:u.id})}
     if(!u.photo&&!u.hired)return go('profile',{id:u.id});
     return go('home');
@@ -755,6 +774,7 @@ document.addEventListener('change',async e=>{
   const a=t.dataset?.actChange;
   if(a==='pickEquip'){const q=S.equip.find(x=>x.id===t.value);D.equipId=t.value||null;if(q)D.f={...(q.fields||{}),serial:q.serial};render()}
   if(a==='recsite'){recSite=t.value;render()}
+  if(a==='showpw'){for(const i of document.querySelectorAll('#a-pin,#a-pin2'))i.type=t.checked?'text':'password'}
   if(a==='role'){const u=S.users.find(x=>x.id===t.dataset.v);u.role=t.value;save('users');toast('Role updated.')}
   if(t.id==='imp'){const f=t.files[0];if(!f)return;try{const j=JSON.parse(await f.text());if(!Array.isArray(j.users)||!j.users.length)throw 0;for(const k of KEYS)if(j[k]!==undefined&&k!=='cordocs'&&k!=='meta'&&!Array.isArray(j[k]))throw 0;if(!await ask('Restore backup?','This replaces all records on this device with the backup.','Restore',true))return;for(const k of KEYS)if(j[k]!==undefined){S[k]=j[k];save(k)}ME=S.users.find(u=>u.id===ME.id&&u.active!==false)||null;if(!ME){try{localStorage.removeItem(SESSION_KEY)}catch(e){}}toast('Backup restored.');t.value='';render()}catch(err){toast('That file is not a Site Safety backup.')}}
 });
@@ -768,6 +788,7 @@ const ACT={
   forgot:async()=>{const em=($('#a-email')?.value||'').trim();if(!em)return toast('Type your email first, then tap Forgot password.');try{await CLOUD.init();await CLOUD.reset(em);toast('Password reset email sent to '+em)}catch(e){toast('Could not send the reset email.')}},
   doCheckin:t=>doCheckin(t.dataset.v),
   doCheckinOther:()=>doCheckinOther(),
+  bioSignIn:()=>bioSignIn(),
   checkout:async()=>{if(!await ask('Leave site?','Your location will be recorded as you leave.','Leave site'))return;const ci=activeCheckin();if(!S.dailies.some(d=>d.checkinId===ci.id)&&!await ask('Daily check not done','You have not done today\'s daily safety check. The office will see this. Leave anyway?','Leave anyway',true))return;let l=null;try{l=await getLoc()}catch(e){}ci.outAt=now();ci.noDaily=!S.dailies.some(d=>d.checkinId===ci.id);ci.outLoc=l;save('checkins');toast('Checked out. Get home safe.');go('home')},
   ans:t=>{D.ans[t.dataset.k]=t.dataset.v;t.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===t))},
   hz:t=>{const k=t.dataset.v;if(D.hz[k])delete D.hz[k];else D.hz[k]={};t.classList.toggle('on');$('#hzbox').innerHTML=hzBox()},
@@ -828,8 +849,10 @@ function exportData(kind){
     if(await CLOUD.init()){const fu=await CLOUD.resume();if(fu){ME=S.users.find(u=>u.id===fu.uid&&u.active!==false)||null;if(ME&&CLOUD.admin&&ME.role!=='admin'){ME.role='admin';save('users')}}}
     else{try{const sid=localStorage.getItem(SESSION_KEY);ME=S.users.find(u=>u.id===sid&&u.active!==false)||null}catch(e){}if(ME)toast('Offline: records will upload when you have signal.')}}
   else{try{const sid=localStorage.getItem(SESSION_KEY);ME=S.users.find(u=>u.id===sid&&u.active!==false)||null}catch(e){}}
+  await BIO.check();
   $('#tk').textContent=TICKER.join('   •   ');
   render();
+  if(!ME&&CLOUD.on&&BIO.saved)setTimeout(()=>{if(!ME&&$('#authf'))bioSignIn()},400);
   setInterval(()=>{if(ME&&activeCheckin())ping()},15*60*1000);
 })();
 }
