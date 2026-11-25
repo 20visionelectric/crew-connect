@@ -145,7 +145,7 @@ const CLOUD = (() => {
   async function remove(kind, id) { if (!ready || !fs) return; try { await fs.collection('vss_' + kind).doc(id).delete(); } catch (e) {} }
   async function guestSign(rec) { if (!await init()) throw new Error('offline'); await fs.collection('vss_policysigs').doc(rec.id).set(rec); }
   const label = () => status === 'on' ? 'Saved to cloud' : 'Cloud: ' + status;
-  return { purge, loadTomb, dropTomb, isDead: id => tomb.has(id), init, signIn, reset, guestSign, remove, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
+  return { flush, purge, loadTomb, dropTomb, isDead: id => tomb.has(id), init, signIn, reset, guestSign, remove, crewName, push, pull, pushAll, resume, signOut, label, get status() { return status; }, get admin() { return admin; }, get user() { return auth && auth.currentUser; }, get on() { return !!FIREBASE_CONFIG; } };
 })();
 
 let ME=null;
@@ -307,6 +307,7 @@ function dueItems(){
   if(!mySig())out.push(['bad','Read and sign the company policy (Policy tab).']);
   if(isOffice()){const miss=S.users.filter(u=>u.active!==false&&u.id!==ME.id&&!S.policysigs.some(p=>p.userId===u.id&&p.version===POLICY_VERSION));if(miss.length)out.push(['warn',`${miss.length} worker(s) have not signed the company policy.`])}
   if(!ME.trade)out.push(['warn','Choose your job title in My profile.']);
+  if(isAdmin()){const dr=S.users.filter(u=>u.deleteReq);if(dr.length)out.push(['bad',dr.length+' account deletion request(s): More → Clean up test data.'])}
   const myTr=S.training.filter(t=>isOffice()||t.userId===ME.id);
   for(const t of myTr)if(t.expiry){const d=-daysSince(t.expiry),nm=t.course==='other'&&t.label?t.label:courseName(t.course);if(d<0)out.push(['bad',`${userName(t.userId)}: ${nm} expired`]);else if(d<=45)out.push(['warn',`${userName(t.userId)}: ${nm} expires in ${dayWord(d)}`])}
   for(const q of S.equip)if(q.status==='out')out.push(['bad',`Out of service: ${INSP[q.type]?.name||q.type} ${q.serial}`]);
@@ -559,7 +560,7 @@ async function delWorker(uid,keepAccount){if(!isAdmin())return;const u=S.users.f
   toast('Deleting…');await wipe(list);toast(keepAccount?'Records cleared.':'Worker deleted.');render()}
 VIEWS.cleanup=()=>{if(!isAdmin())return '<h1>Clean up test data</h1><p class="mute">Office admin only.</p>';
   return `<h1>Clean up test data</h1><div class="warnbox">For test accounts and test entries only. Deleted records are gone from every phone and the cloud. Keep real safety records: COR and the Ministry of Labour can ask for them.</div><p></p>
-  <div class="card"><div class="list">${S.users.map(u=>{const n=userRecs(u.id).length;return `<div class="it"><div class="m"><b>${esc(u.name)}${u.id===ME.id?' (you)':''}</b><div class="small mute">${esc(u.email||'')} • ${esc(u.trade||'')} • ${n} record(s)</div></div><div class="row" style="gap:6px;flex:none">${n?`<button class="btn sm" data-act="clearRecs" data-v="${esc(u.id)}">Clear records</button>`:''}${u.id!==ME.id?`<button class="btn sm red" data-act="delWorker" data-v="${esc(u.id)}">Delete worker</button>`:''}</div></div>`}).join('')}</div></div>
+  <div class="card"><div class="list">${S.users.map(u=>{const n=userRecs(u.id).length;return `<div class="it"><div class="m"><b>${esc(u.name)}${u.id===ME.id?' (you)':''}</b>${u.deleteReq?` <span class="pill bad">Deletion requested ${fmtD(dayOf(u.deleteReq))}</span>`:''}<div class="small mute">${esc(u.email||'')} • ${esc(u.trade||'')} • ${n} record(s)</div></div><div class="row" style="gap:6px;flex:none">${n?`<button class="btn sm" data-act="clearRecs" data-v="${esc(u.id)}">Clear records</button>`:''}${u.id!==ME.id?`<button class="btn sm red" data-act="delWorker" data-v="${esc(u.id)}">Delete worker</button>`:''}</div></div>`}).join('')}</div></div>
   <p class="small mute">To delete one record, open it in Records and tap Delete record.</p>`};
 
 /* ================= RECORDS ================= */
@@ -652,6 +653,7 @@ VIEWS.profile=()=>{
    <label class="f" for="p-title">Job title</label><select id="p-title" ${isAdmin()||u.id===ME.id?'':'disabled'}>${jobOpts(D.title)}</select>
    <div id="p-sto-w" style="display:${isApp(D.title)?'':'none'}"><label class="f" for="p-yr">Apprentice year</label><select id="p-yr" ${can?'':'disabled'}>${yrOpts(appYr(D.title))}</select><label class="f" for="p-sto">Skilled Trades Ontario (STO) apprentice number</label><input id="p-sto" data-bind="sto" value="${esc(D.sto||'')}" ${can?'':'disabled'}></div>
    ${can?'<p></p><button class="btn pri block" data-act="saveProfile">Save profile</button>':''}
+   ${u.id===ME.id?`<p></p><details class="card"><summary><b>Delete my account</b></summary><p class="small">This sends a request to the 20 Vision office to delete your Site Safety account, profile, photo, certificates and contact details, and signs you out on this phone. Safety records you signed (daily checks, inspections, toolbox talks, incident reports, policy sign-offs) are kept as long as Ontario's Occupational Health and Safety Act and the COR program require, then deleted. Your sign-in is shared with 20 Vision Crew Connect; ask the office if you also want that closed. Questions: info@20visionelectric.com</p><button class="btn red block" data-act="delMe">Request account deletion</button></details>`:''}
    <p class="small mute">Your address, phone, hire date and emergency contact are only seen by you and the office.</p></div>
   <div class="card"><h2>Certificates and documents</h2><p class="small mute">Attach a photo or PDF of every ticket and card: working at heights, lift licence, first aid, lockout, WHMIS, WSIB papers and anything else.</p>
    ${can?`<button class="btn pri" data-act="addTr" data-v="${esc(u.id)}">Attach a certificate or document</button>`:''}
@@ -928,6 +930,12 @@ const ACT={
   saveSite:()=>{if(!D.name?.trim())return toast('Give the site a name.');const lat=D.lat===''||D.lat==null?null:+D.lat,lng=D.lng===''||D.lng==null?null:+D.lng;if((lat!=null&&isNaN(lat))||(lng!=null&&isNaN(lng)))return toast('Latitude and longitude must be numbers.');const s={...D,lat,lng,radius:+D.radius||300,active:D.activeS!=='0'};delete s.activeS;if(!s.id){s.id=uid();S.sites.push(s)}else Object.assign(S.sites.find(x=>x.id===s.id),s);save('sites');D={};toast('Site saved.');go('sites')},
   toggleUser:t=>{const u=S.users.find(x=>x.id===t.dataset.v);u.active=u.active===false;save('users');render()},
   exp:t=>exportData(t.dataset.v),
+  delMe:async()=>{if(!await ask('Delete my account?','The office will delete your account and personal details. Safety records you signed are kept as required by law. You will be signed out now.','Request deletion',true))return;
+    const u=S.users.find(x=>x.id===ME.id);if(u){u.deleteReq=now();u.updated=now();save('users')}
+    toast('Sending your request…');try{await CLOUD.flush()}catch(e){}
+    BIO.forget();try{localStorage.removeItem('vss-email');localStorage.setItem('vss-rem','0')}catch(e){}
+    ME=null;try{localStorage.removeItem(SESSION_KEY)}catch(e){}await CLOUD.signOut();D={};render();
+    tell('Request sent','Your deletion request was sent to the 20 Vision office. If you have no signal it is sent next time this phone is online. You can also email info@20visionelectric.com.','OK')},
   signout:async()=>{if(!await ask('Sign out?',CLOUD.on?'You will need your email and password to sign back in.':'You will need your email and PIN to sign back in.','Sign out'))return;ME=null;try{localStorage.removeItem(SESSION_KEY)}catch(e){}CLOUD.signOut();D={};render()}
 };
 let BUSY=false;const SAVES=['saveDaily','saveInsp','saveTalk','saveInc','signPolicy','doCheckin','checkout','saveProfile','investigate'];
